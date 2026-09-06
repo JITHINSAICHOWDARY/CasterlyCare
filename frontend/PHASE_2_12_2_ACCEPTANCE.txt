@@ -1,0 +1,33 @@
+CASTERLYCARE — PHASE 2.12.2 ACCEPTANCE
+ADMIN DOCTOR MANAGEMENT UX
+
+Status: COMPLETE
+
+Implemented:
+- Replaced the legacy doctor table with a resilient admin management surface.
+- Added doctor account summary metrics.
+- Added search by name, email, specialization, and Unique Doctor ID.
+- Added All / Active / Deactivated / On-Duty filters.
+- Preserved Add Doctor flow and generated Unique Doctor ID display.
+- Normalized email/name/specialization before account creation.
+- Added secure-channel guidance for temporary doctor passwords.
+- Added doctor detail modal for account/duty/status review.
+- Added confirmation before deactivate/reactivate operations.
+- Added background refresh after administrative status changes.
+- Added distinct loading, refresh, empty, action-error, and API-error states.
+- Added accessible table caption, scoped headers, labelled controls, and keyboard-scroll region.
+- Added responsive table container and flexible action/header layout.
+- Preserved existing adminService API contracts.
+- No clinical history is deleted by account deactivation.
+
+Validation:
+- JSX delimiter / bracket validation: PASS
+- Admin service contract references: PASS
+- Required doctor-management labels present: PASS
+- Search/filter logic present: PASS
+- Deactivate/reactivate confirmation flow present: PASS
+- Add Doctor result + Unique Doctor ID flow present: PASS
+- ZIP integrity check: PASS after packaging
+
+Build note:
+- npm/Vite build not executed because dependencies are not installed in the workspace.

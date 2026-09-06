@@ -1,0 +1,10 @@
+CASTERLYCARE — PHASE 2.11.2
+DOCTOR SOS QUEUE & ACKNOWLEDGEMENT UX
+
+- Urgent SOS alerts are visually prioritized.
+- Patient name, surgery, and blood group are shown.
+- Acknowledgement is protected from duplicate submission.
+- Successful acknowledgement opens the patient file.
+- Failure preserves the alert context and provides retry guidance.
+- Loading, empty, refresh, and error states are present.
+- No backend SOS contract changes.

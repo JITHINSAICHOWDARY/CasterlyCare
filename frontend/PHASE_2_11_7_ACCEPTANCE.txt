@@ -1,0 +1,13 @@
+CASTERLYCARE — PHASE 2.11.7
+DOCTOR PATIENT DETAILS & RECOVERY TRACKER UX
+
+- Current-care episode is visually separated from historical care.
+- Recovery tracker shows total/completed/remaining days.
+- Recovery +/- actions have busy/error feedback.
+- Discharge is confirmation-protected.
+- Patient files are restricted to PDF/JPG/JPEG/PNG and 5 MB client-side.
+- Private doctor notes, medicines, and dietary restrictions have actionable states.
+- Active medicine removal is confirmation-protected.
+- Secure patient-file links accept only /uploads/patient_files/ paths.
+- Loading, retry, refresh, empty, and error states are present.
+- Responsive and accessible interaction states are included.

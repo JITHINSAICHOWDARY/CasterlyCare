@@ -1,0 +1,19 @@
+CASTERLYCARE — PHASE 2.12.4 ACCEPTANCE
+Admin Emergency SOS Escalation & Dispatch UX
+
+PASS
+- Emergency escalations load through the centralized admin service.
+- Active escalations are separated from previously handled records.
+- Patient name, surgery, blood group, trigger time, and alert identifier are visible.
+- Emergency/off-duty context is visually prominent.
+- Dispatch requires explicit confirmation before the API action is called.
+- Duplicate dispatch actions are blocked while the selected alert is being processed.
+- Dispatch success refreshes the queue and provides visible feedback.
+- Dispatch failures are surfaced without losing the escalation context.
+- Refresh/loading/empty/error states are present.
+- Historical escalation records remain visible when returned by the backend.
+- Emergency workflow disclaimer is visible.
+- Responsive behavior is provided for tablet and mobile layouts.
+- Confirm dialog and live-region feedback support keyboard/accessibility workflows.
+- Existing admin service/API contracts remain unchanged.
+- Node/Vite compilation was not claimed; JSX requires the project toolchain for compilation.

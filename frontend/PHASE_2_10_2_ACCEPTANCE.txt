@@ -1,0 +1,15 @@
+CASTERLYCARE — PHASE 2.10.2
+MANUAL VITALS ENTRY UX & VALIDATION HARDENING
+
+Implemented:
+- Explicit units and measured-reading guidance for SpO2, heart rate, blood pressure, and temperature.
+- Conservative client-side input bounds to reject malformed/unrealistic entries before submission.
+- Cross-field systolic/diastolic validation retained.
+- Clear measurement reset action.
+- Prevents accidental number-input wheel edits.
+- Accessible inline validation and first-invalid focus retained.
+- Busy-state duplicate submission protection retained.
+- Responsive form action layout.
+- No backend/API contract changes.
+
+Status: COMPLETE

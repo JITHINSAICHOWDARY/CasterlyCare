@@ -1,0 +1,96 @@
+CASTERLYCARE — PHASE 2.14.1 INTEGRATION CHECK
+PASS: 89
+FAIL: 4
+PASS | Required integration file exists: src/api/services/auth.js
+PASS | Required integration file exists: src/api/services/admin.js
+PASS | Required integration file exists: src/api/services/doctor.js
+PASS | Required integration file exists: src/api/services/patient.js
+PASS | Required integration file exists: src/config/routes.js
+PASS | Required integration file exists: src/config/navigation.js
+PASS | Required integration file exists: src/config/realtimeEvents.js
+PASS | Required integration file exists: src/context/RealtimeContext.jsx
+PASS | src/api/services/auth.js uses shared api client | no direct fetch/axios expected
+PASS | src/api/services/auth.js has no raw axios import
+PASS | src/api/services/admin.js uses shared api client | no direct fetch/axios expected
+PASS | src/api/services/admin.js has no raw axios import
+PASS | src/api/services/doctor.js uses shared api client | no direct fetch/axios expected
+PASS | src/api/services/doctor.js has no raw axios import
+PASS | src/api/services/patient.js uses shared api client | no direct fetch/axios expected
+PASS | src/api/services/patient.js has no raw axios import
+PASS | Protected route namespace exists: admin
+PASS | Protected route namespace exists: doctor
+PASS | Protected route namespace exists: patient
+PASS | Navigation namespace exists: admin
+PASS | Navigation namespace exists: doctor
+PASS | Navigation namespace exists: patient
+PASS | Realtime event contract: appointment_created
+PASS | Realtime event contract: appointment_updated
+PASS | Realtime event contract: appointment_completed
+PASS | Realtime event contract: appointment_rescheduled
+PASS | Realtime event contract: appointment_cancelled
+PASS | Realtime event contract: sos_created
+PASS | Realtime event contract: sos_updated
+PASS | Realtime event contract: sos_resolved
+PASS | Realtime event contract: doctor_duty_updated
+PASS | Realtime event contract: recovery_updated
+PASS | Realtime event contract: care_episode_completed
+PASS | Realtime event contract: medicine_updated
+PASS | Realtime event contract: file_uploaded
+PASS | Realtime event contract: note_updated
+PASS | Realtime event contract: restriction_updated
+PASS | Realtime event contract: clinical_record_updated
+FAIL | RealtimeContext exposes subscribe()
+FAIL | RealtimeContext exposes joinThread()
+FAIL | RealtimeContext exposes leaveThread()
+FAIL | RealtimeContext exposes publish()
+PASS | RealtimeContext handles browser offline state
+PASS | RealtimeContext handles browser online state
+PASS | No direct fetch() in page: src/pages/admin/AdminAppointments.jsx
+PASS | No direct axios import in page: src/pages/admin/AdminAppointments.jsx
+PASS | No direct fetch() in page: src/pages/admin/AdminDoctors.jsx
+PASS | No direct axios import in page: src/pages/admin/AdminDoctors.jsx
+PASS | No direct fetch() in page: src/pages/admin/AdminEscalations.jsx
+PASS | No direct axios import in page: src/pages/admin/AdminEscalations.jsx
+PASS | No direct fetch() in page: src/pages/admin/AdminOverview.jsx
+PASS | No direct axios import in page: src/pages/admin/AdminOverview.jsx
+PASS | No direct fetch() in page: src/pages/admin/navItems.js
+PASS | No direct axios import in page: src/pages/admin/navItems.js
+PASS | No direct fetch() in page: src/pages/auth/Login.jsx
+PASS | No direct axios import in page: src/pages/auth/Login.jsx
+PASS | No direct fetch() in page: src/pages/auth/Signup.jsx
+PASS | No direct axios import in page: src/pages/auth/Signup.jsx
+PASS | No direct fetch() in page: src/pages/doctor/DoctorAppointments.jsx
+PASS | No direct axios import in page: src/pages/doctor/DoctorAppointments.jsx
+PASS | No direct fetch() in page: src/pages/doctor/DoctorHome.jsx
+PASS | No direct axios import in page: src/pages/doctor/DoctorHome.jsx
+PASS | No direct fetch() in page: src/pages/doctor/DoctorInbox.jsx
+PASS | No direct axios import in page: src/pages/doctor/DoctorInbox.jsx
+PASS | No direct fetch() in page: src/pages/doctor/DoctorPatientDetails.jsx
+PASS | No direct axios import in page: src/pages/doctor/DoctorPatientDetails.jsx
+PASS | No direct fetch() in page: src/pages/doctor/DoctorPatients.jsx
+PASS | No direct axios import in page: src/pages/doctor/DoctorPatients.jsx
+PASS | No direct fetch() in page: src/pages/doctor/DoctorProfile.jsx
+PASS | No direct axios import in page: src/pages/doctor/DoctorProfile.jsx
+PASS | No direct fetch() in page: src/pages/doctor/navItems.js
+PASS | No direct axios import in page: src/pages/doctor/navItems.js
+PASS | No direct fetch() in page: src/pages/patient/PatientAppointments.jsx
+PASS | No direct axios import in page: src/pages/patient/PatientAppointments.jsx
+PASS | No direct fetch() in page: src/pages/patient/PatientAssessment.jsx
+PASS | No direct axios import in page: src/pages/patient/PatientAssessment.jsx
+PASS | No direct fetch() in page: src/pages/patient/PatientDiet.jsx
+PASS | No direct axios import in page: src/pages/patient/PatientDiet.jsx
+PASS | No direct fetch() in page: src/pages/patient/PatientHome.jsx
+PASS | No direct axios import in page: src/pages/patient/PatientHome.jsx
+PASS | No direct fetch() in page: src/pages/patient/PatientLabReports.jsx
+PASS | No direct axios import in page: src/pages/patient/PatientLabReports.jsx
+PASS | No direct fetch() in page: src/pages/patient/PatientMedicines.jsx
+PASS | No direct axios import in page: src/pages/patient/PatientMedicines.jsx
+PASS | No direct fetch() in page: src/pages/patient/PatientProfile.jsx
+PASS | No direct axios import in page: src/pages/patient/PatientProfile.jsx
+PASS | No direct fetch() in page: src/pages/patient/navItems.js
+PASS | No direct axios import in page: src/pages/patient/navItems.js
+PASS | App imports all three role route groups indirectly through config
+PASS | AuthContext exists
+PASS | Patient emergency chat service exists
+PASS | Doctor Priority Inbox service exists
+PASS | Admin SOS service exists

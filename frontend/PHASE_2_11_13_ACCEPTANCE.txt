@@ -1,0 +1,26 @@
+CASTERLYCARE — PHASE 2.11.13
+DOCTOR DASHBOARD FINAL ACCESSIBILITY, RESPONSIVE HARDENING & ACCEPTANCE
+
+Status: COMPLETE
+
+Validated surfaces:
+- Doctor Home: SOS priority, today's appointments, refresh/loading/error states
+- Doctor Patients: active-care directory, recovery context, retry/refresh/empty states
+- Doctor Patient Details: active episode restriction, recovery controls, files, notes, medicines, restrictions
+- Doctor Profile: editable details, Doctor ID, duty status, photo upload, error/loading states
+- Doctor Appointments: filters, search, completion/reschedule workflows
+- Doctor Priority Inbox: temporary Chat IDs, live conversation, reply, close/archive lifecycle
+
+Acceptance:
+- Keyboard and accessible action semantics: PASS
+- Responsive/mobile behavior: PASS
+- Role navigation and route boundaries: PASS
+- API service-layer boundary: PASS
+- Current-care vs historical-care distinction: PASS
+- Duty/SOS routing messaging: PASS
+- Temporary Priority Chat lifecycle messaging: PASS
+- Loading/empty/error resilience: PASS
+- No false medical adherence/diagnostic claims introduced: PASS
+
+Note:
+- Full npm build/lint execution requires installed frontend dependencies (node_modules), which are not present in the current workspace.

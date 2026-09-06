@@ -1,0 +1,18 @@
+CASTERLYCARE — PHASE 2.11.12
+DOCTOR PRIORITY INBOX & TEMPORARY EMERGENCY CHAT UX
+
+Status: COMPLETE
+
+Implemented:
+- Open temporary Emergency Chat query list with Chat ID and patient name.
+- Search/filter across open Chat IDs and patient names.
+- Explicit temporary-query lifecycle language.
+- Conversation loading, retry, stale-data and refresh handling.
+- Live Socket.IO connection status and incoming-message handling.
+- Duplicate-message protection for socket/API race conditions.
+- Reply compose area with 2,000-character limit and duplicate-send protection.
+- Accessible labels, live status, keyboard focus behavior, responsive layout.
+- Close & Archive confirmation flow.
+- Closing removes the thread from the active inbox and explains that a future query receives a new Chat ID.
+- Existing doctor API/service contracts preserved.
+- No direct Axios/fetch calls added.

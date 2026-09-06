@@ -1,0 +1,15 @@
+CASTERLYCARE — PHASE 2.10.1
+PATIENT ASSESSMENT & VITALS ARCHITECTURE
+
+1. Assessment page uses the centralized patient service layer only.
+2. Vitals form includes SpO2, heart rate, systolic BP, diastolic BP, and temperature.
+3. Client-side validation rejects missing, non-numeric, and implausible values.
+4. Blood-pressure cross-field validation requires systolic > diastolic.
+5. Latest result uses professional monitoring language rather than diagnostic wording.
+6. Longitudinal history is presented as monitoring trajectory data.
+7. Assessment disclaimer explicitly states that automated monitoring is not diagnosis.
+8. Existing backend POST /patient/assessment and GET /patient/assessment/history contracts are unchanged.
+9. Loading, refresh, empty, validation-error, and submission-error states are present.
+10. Accessibility semantics include labels, described-by errors, focus handling, and live status announcements.
+11. Responsive mobile layout and reduced-motion behavior are included.
+12. Real One-Class SVM and data-drift engine remain deferred to Phase 3 and are not falsely claimed as implemented here.

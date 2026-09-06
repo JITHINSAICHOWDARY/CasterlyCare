@@ -1,0 +1,12 @@
+CASTERLYCARE — PHASE 2.14.6
+CROSS-ROLE SECURITY & PERMISSION INTEGRATION VALIDATION
+
+Result: 65 PASS / 0 FAIL
+
+Scope:
+- Admin / Doctor / Patient protected-route matrix
+- Public-route and session handling
+- Central bearer-token handling and 401 session clearing
+- Role route map coverage
+- Page-to-service boundary checks
+- Realtime authentication boundary

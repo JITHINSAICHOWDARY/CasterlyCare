@@ -1,0 +1,23 @@
+CASTERLYCARE — PHASE 2.13.5
+REAL-TIME DUTY STATUS, DOCTOR AVAILABILITY & ADMIN VISIBILITY
+
+STATUS: COMPLETE (FRONTEND CONTRACT READY)
+
+Implemented:
+- Added doctor_duty_updated realtime event contract.
+- Shared RealtimeContext exposes publish().
+- Doctor Profile publishes duty-state changes after successful REST update.
+- Admin Overview refreshes when duty-state events arrive.
+- Admin Doctor Management refreshes when duty-state events arrive.
+- REST remains the source of truth.
+- Existing doctor duty, SOS routing, and admin doctor-management contracts preserved.
+
+Backend note:
+The current frontend checkpoint does not contain the Express/Socket.IO server. The server must broadcast doctor_duty_updated to subscribed admin clients for cross-user live propagation. Until then, existing REST refresh/polling remains authoritative.
+
+Validation:
+- Realtime event contract present.
+- publish() exposed by provider.
+- Doctor Profile publishes successful duty changes.
+- Admin Overview and Admin Doctors subscribe.
+- No direct socket access added to role pages.

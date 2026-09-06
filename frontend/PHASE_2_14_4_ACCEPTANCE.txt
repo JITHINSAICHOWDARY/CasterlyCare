@@ -1,0 +1,11 @@
+CASTERLYCARE — PHASE 2.14.4 DOCTOR CRITICAL JOURNEY INTEGRATION VALIDATION
+
+Validated doctor role routing, dashboard/SOS, duty status, active patient directory, patient medical record, recovery tracker, files, private notes, medicines, food restrictions, appointments, follow-ups, and temporary Priority Inbox chat lifecycle.
+
+Static contract validation result: PASS 73 / FAIL 0 (see PHASE_2_14_4_CHECK.txt)
+
+Important integration note:
+- Doctor appointments UI is wired for complete/reschedule/follow-up service contracts.
+- Backend availability of every mutation endpoint must be validated against the running API before production acceptance.
+- Realtime UI subscriptions rely on the shared event contracts; server emission remains required for cross-session live propagation.
+- Browser-driven E2E was not executed in this checkpoint because the dependency/browser environment is unavailable.

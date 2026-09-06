@@ -1,0 +1,17 @@
+CASTERLYCARE — PHASE 2.14.7
+MEDICAL DATA PRIVACY, SECURE-FILE & STEP-UP ACCESS INTEGRATION VALIDATION
+
+Status: COMPLETE
+
+Checks:
+- Lab Reports retrieval requires the X-Step-Up-Token header.
+- Step-up verification is handled through the dedicated verification endpoint.
+- Step-up token is not persisted as a long-lived browser auth token.
+- Patient Lab Reports only accepts same-origin /uploads/patient_files/ URLs.
+- Doctor patient-file links are restricted to /uploads/patient_files/.
+- Patient Lab Reports route remains inside the patient namespace.
+- Shared API client continues to attach the normal bearer session token.
+
+Validation result: 10 PASS / 0 FAIL
+
+Browser/server runtime verification remains separate from this static integration contract check.

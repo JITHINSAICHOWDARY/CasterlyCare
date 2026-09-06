@@ -1,0 +1,25 @@
+CASTERLYCARE — PHASE 2.14.2 ACCEPTANCE
+========================================
+
+End-to-end role-flow and navigation contract validation completed.
+
+PASS: 53
+FAIL: 0
+
+Coverage:
+- Unified login and signup public routes
+- Hidden admin routing
+- Admin protected namespace and navigation
+- Doctor protected namespace and navigation
+- Patient protected namespace and navigation
+- Unauthenticated protected-route handling
+- Cross-role namespace isolation
+- Authenticated-user redirect away from public routes
+- Root role-home routing
+- Logout token/session clearing
+- Auth response role validation
+- Patient Doctor ID normalization
+- No visible Admin navigation control
+
+Runtime-browser E2E was not executed because frontend dependencies/browser tooling are not installed in this workspace.
+This acceptance validates the executable route/auth contract and is intended to run alongside browser E2E once the dependency environment is available.

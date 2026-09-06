@@ -1,0 +1,25 @@
+import api, { multipartConfig } from '../client';
+
+export const patientService = {
+  getHome() { return api.get('/patient/home'); },
+  sendSos() { return api.post('/patient/sos'); },
+  getProfile() { return api.get('/patient/profile'); },
+  updateProfile(payload) { return api.put('/patient/profile', payload); },
+  uploadProfilePhoto(formData) { return api.post('/patient/profile/photo', formData, multipartConfig()); },
+  verifyLabReports(password) { return api.post('/patient/lab-reports/verify', { password }); },
+  getLabReports(stepUpToken) { return api.get('/patient/lab-reports', { headers: { 'X-Step-Up-Token': stepUpToken } }); },
+  startCareEpisode(payload) { return api.post('/patient/care-episodes', payload); },
+  getAppointments() { return api.get('/patient/appointments'); },
+  bookAppointment(payload) { return api.post('/patient/appointments', payload); },
+  getAvailableSlots(date) { return api.get('/patient/appointments/available-slots', { params: { date } }); },
+  rescheduleAppointment(appointmentId, payload) { return api.patch(`/patient/appointments/${appointmentId}/reschedule`, payload); },
+  cancelAppointment(appointmentId) { return api.patch(`/patient/appointments/${appointmentId}/cancel`); },
+  checkDiet(foodItem) { return api.post('/patient/diet-check', { foodItem }); },
+  getMedicines() { return api.get('/patient/medicines'); },
+  getAssessmentHistory() { return api.get('/patient/assessment/history'); },
+  submitAssessment(payload) { return api.post('/patient/assessment', payload); },
+  askKingslayer(message) { return api.post('/patient/kingslayer', { message }); },
+  getEmergencyChatActive() { return api.get('/patient/emergency-chat/active'); },
+  startEmergencyChat() { return api.post('/patient/emergency-chat/start'); },
+  sendEmergencyMessage(threadId, content) { return api.post(`/patient/emergency-chat/${threadId}/messages`, { content }); },
+};

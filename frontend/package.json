@@ -1,0 +1,42 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test:integration": "node scripts/phase2141-integration-check.mjs",
+    "test:role-flows": "node scripts/phase2142-role-flow-check.mjs",
+    "test:patient-critical": "node scripts/phase2143-patient-critical-flow-check.mjs",
+    "test:admin-critical": "node scripts/phase2145-admin-critical-flow-check.mjs",
+    "test:security-permissions": "node scripts/phase2146-security-permission-check.mjs",
+    "test:medical-privacy": "node scripts/phase2147-medical-privacy-check.mjs",
+    "test:appointments": "node scripts/phase2148-appointment-contract-check.mjs",
+    "test:failure-modes": "node scripts/phase2149-failure-mode-check.mjs",
+    "test:doctor-critical": "node scripts/phase2144-doctor-critical-flow-check.mjs",
+    "test:frontend-acceptance": "node scripts/phase21410-frontend-acceptance-check.mjs"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "date-fns": "^4.4.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3",
+    "recharts": "^3.10.1",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "autoprefixer": "^10.5.4",
+    "oxlint": "^1.79.0",
+    "postcss": "^8.5.26",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.2"
+  }
+}

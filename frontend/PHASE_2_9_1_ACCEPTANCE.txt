@@ -1,0 +1,13 @@
+CASTERLYCARE — PHASE 2.9.1
+PATIENT MEDICINES ARCHITECTURE
+
+1. PatientMedicines uses patientService.getMedicines only.
+2. Active medicines are normalized safely before render.
+3. Reminder times are sorted chronologically when parseable.
+4. Missing reminder times are explicitly represented as not recorded.
+5. Active prescription details show medicine, form, dosage, frequency, and reminder times.
+6. Today's schedule explicitly avoids implying dose adherence/taken state.
+7. Initial loading, empty, error, and retry states are present.
+8. Responsive/mobile CSS is scoped to medicine surfaces.
+9. Clinical medication disclaimer is present.
+10. Backend /patient/medicines contract is unchanged.

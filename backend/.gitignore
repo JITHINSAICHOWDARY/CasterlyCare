@@ -1,0 +1,7 @@
+node_modules/
+data/
+.env
+uploads/patient_files/*
+uploads/profile_photos/*
+!uploads/patient_files/.gitkeep
+!uploads/profile_photos/.gitkeep

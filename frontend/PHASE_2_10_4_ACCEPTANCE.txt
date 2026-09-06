@@ -1,0 +1,10 @@
+2.10.4 — Longitudinal Monitoring & Trend Visualization UX
+
+Implemented:
+- Longitudinal monitoring summary metrics.
+- Numerical change from previous monitoring score without clinical-improvement claims.
+- Monitoring trajectory chart with assessment sequence and recording time tooltips.
+- Accessible tabular fallback for the latest historical observations.
+- Clear distinction between measurement trajectory and clinical interpretation.
+- Responsive mobile summary/table treatment.
+- Phase 3 One-Class SVM/data-drift boundary remains unchanged.

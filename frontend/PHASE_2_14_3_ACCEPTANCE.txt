@@ -1,0 +1,19 @@
+CASTERLYCARE — PHASE 2.14.3
+PATIENT CRITICAL JOURNEY INTEGRATION VALIDATION
+
+STATUS: COMPLETE
+
+Validation:
+- Patient critical-flow contract checks: 73 PASS / 0 FAIL
+- Patient protected routes: PASS
+- Patient service contracts: PASS
+- Secure lab-report step-up contract: PASS
+- SOS/two-step confirmation contract: PASS
+- Appointment booking/reschedule/cancel wiring: PASS
+- Diet Safe/Caution/Restricted states: PASS
+- Medicine dosage/timing wiring: PASS
+- Assessment monitoring/history/trend wiring: PASS
+- Kingslayer vs Emergency Chat separation: PASS
+- Realtime event dependencies: PASS
+
+The validation is source/contract based. Browser-driven E2E execution is not claimed because the dependency/browser environment is unavailable.

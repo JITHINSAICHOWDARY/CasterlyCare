@@ -1,0 +1,19 @@
+CASTERLYCARE — PHASE 2.14.9
+Realtime, Offline & Failure-Mode Integration Validation
+
+Status: COMPLETE
+
+Scope
+- Browser offline/online lifecycle.
+- Socket disconnect/reconnect behavior.
+- Authentication refresh before reconnect.
+- Tracked chat-room rejoin behavior.
+- REST fallback for chat and dashboard operations.
+- Realtime event contract coverage.
+- Cross-check linkage to integration, security, and appointment contract harnesses.
+
+Validation command
+npm run test:failure-modes
+
+Note
+- This is a source/contract integration harness. It does not claim a browser network-throttling E2E run when the dependency/browser environment is unavailable.

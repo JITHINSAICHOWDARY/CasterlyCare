@@ -1,0 +1,56 @@
+CASTERLYCARE — PHASE 2.14.2 ROLE FLOW CHECK
+PASS: 53
+FAIL: 0
+PASS | admin protected route group exists
+PASS | admin route registered: /admin
+PASS | admin route registered: /admin/doctors
+PASS | admin route registered: /admin/appointments
+PASS | admin route registered: /admin/escalations
+PASS | admin role home configured
+PASS | admin navigation entries cover route namespace
+PASS | doctor protected route group exists
+PASS | doctor route registered: /doctor
+PASS | doctor route registered: /doctor/profile
+PASS | doctor route registered: /doctor/patients
+PASS | doctor route registered: /doctor/patients/:patientId
+PASS | doctor route registered: /doctor/appointments
+PASS | doctor route registered: /doctor/inbox
+PASS | doctor role home configured
+PASS | doctor navigation entries cover route namespace
+PASS | patient protected route group exists
+PASS | patient route registered: /patient
+PASS | patient route registered: /patient/profile
+PASS | patient route registered: /patient/lab-reports
+PASS | patient route registered: /patient/appointments
+PASS | patient route registered: /patient/diet
+PASS | patient route registered: /patient/medicines
+PASS | patient route registered: /patient/assessment
+PASS | patient role home configured
+PASS | patient navigation entries cover route namespace
+PASS | Public login route exists
+PASS | Public signup route exists
+PASS | Catch-all returns to root redirect
+PASS | Unauthenticated protected users go to login
+PASS | Wrong-role protected access redirects to own role home
+PASS | Public routes redirect authenticated users to role home
+PASS | Root redirect sends authenticated users to role home
+PASS | Unknown role falls back to login
+PASS | Auth session stores token
+PASS | Auth session stores user
+PASS | Logout clears token
+PASS | Logout clears user
+PASS | Auth response validates role
+PASS | Patient signup normalizes Doctor ID
+PASS | No visible admin navigation control
+PASS | admin protected namespace appears in App
+PASS | doctor protected namespace appears in App
+PASS | patient protected namespace appears in App
+PASS | admin group starts at protected boundary
+PASS | admin group excludes /doctor
+PASS | admin group excludes /patient
+PASS | doctor group starts at protected boundary
+PASS | doctor group excludes /admin
+PASS | doctor group excludes /patient
+PASS | patient group starts at protected boundary
+PASS | patient group excludes /admin
+PASS | patient group excludes /doctor

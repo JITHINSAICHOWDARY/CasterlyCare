@@ -1,0 +1,46 @@
+// Phase 2.13.5 — realtime event contract for appointments, SOS, and doctor duty state
+export const REALTIME_EVENTS = Object.freeze({
+  APPOINTMENT_CREATED: 'appointment_created',
+  APPOINTMENT_UPDATED: 'appointment_updated',
+  APPOINTMENT_COMPLETED: 'appointment_completed',
+  APPOINTMENT_RESCHEDULED: 'appointment_rescheduled',
+  APPOINTMENT_CANCELLED: 'appointment_cancelled',
+  SOS_CREATED: 'sos_created',
+  SOS_UPDATED: 'sos_updated',
+  SOS_RESOLVED: 'sos_resolved',
+  DOCTOR_DUTY_UPDATED: 'doctor_duty_updated',
+  RECOVERY_UPDATED: 'recovery_updated',
+  CARE_EPISODE_COMPLETED: 'care_episode_completed',
+  MEDICINE_UPDATED: 'medicine_updated',
+  FILE_UPLOADED: 'file_uploaded',
+  NOTE_UPDATED: 'note_updated',
+  RESTRICTION_UPDATED: 'restriction_updated',
+  CLINICAL_RECORD_UPDATED: 'clinical_record_updated',
+});
+
+export const APPOINTMENT_REALTIME_EVENTS = Object.freeze([
+  REALTIME_EVENTS.APPOINTMENT_CREATED,
+  REALTIME_EVENTS.APPOINTMENT_UPDATED,
+  REALTIME_EVENTS.APPOINTMENT_COMPLETED,
+  REALTIME_EVENTS.APPOINTMENT_RESCHEDULED,
+  REALTIME_EVENTS.APPOINTMENT_CANCELLED,
+]);
+
+export const RECOVERY_REALTIME_EVENTS = Object.freeze([
+  REALTIME_EVENTS.RECOVERY_UPDATED,
+  REALTIME_EVENTS.CARE_EPISODE_COMPLETED,
+]);
+
+export const CLINICAL_RECORD_REALTIME_EVENTS = Object.freeze([
+  REALTIME_EVENTS.MEDICINE_UPDATED,
+  REALTIME_EVENTS.FILE_UPLOADED,
+  REALTIME_EVENTS.NOTE_UPDATED,
+  REALTIME_EVENTS.RESTRICTION_UPDATED,
+  REALTIME_EVENTS.CLINICAL_RECORD_UPDATED,
+]);
+
+export const SOS_REALTIME_EVENTS = Object.freeze([
+  REALTIME_EVENTS.SOS_CREATED,
+  REALTIME_EVENTS.SOS_UPDATED,
+  REALTIME_EVENTS.SOS_RESOLVED,
+]);

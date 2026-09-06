@@ -1,0 +1,16 @@
+CASTERLYCARE — PHASE 2.7.5 ACCEPTANCE
+Appointment Booking Success & Conflict Recovery UX
+
+PASS
+- Successful booking now displays a dedicated confirmation state before closing the wizard.
+- Confirmation presents visit type, service, date, time, and appointment reference when returned by the API.
+- Patient can explicitly finish the flow with Done.
+- Parent appointment list refresh remains invoked after confirmation.
+- Booking submission remains disabled while busy.
+- Clash/conflict errors are identified and return the wizard to Date & time.
+- Conflict copy explicitly states that no appointment was created.
+- Non-conflict failures preserve the wizard and explain that no appointment was created.
+- Existing backend clash validation remains authoritative.
+- Existing patientService booking contract remains unchanged.
+- Responsive success surface styles added.
+- Reduced-motion support preserved.

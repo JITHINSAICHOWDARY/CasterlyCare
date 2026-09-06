@@ -1,0 +1,21 @@
+CASTERLYCARE — PHASE 2.8.2
+ACTIVE DIETARY RESTRICTIONS & DOCTOR GUIDANCE UX
+
+Implemented:
+- Dedicated Current dietary guidance panel.
+- Displays clinician-configured restriction data when supplied by the patient profile/care-episode payload.
+- Normalizes string/object restriction shapes safely.
+- Gives explicit priority to clinician-configured restrictions over automated food-check guidance.
+- Safe empty/error state when restriction data is unavailable.
+- Preserves diet-check API/service boundary.
+- Preserves clinical disclaimer and Emergency Chat guidance.
+
+Important integration note:
+- Existing patient profile backend reference does not currently include FoodRestriction records in the patient /profile response.
+- The frontend is therefore prepared for the canonical restriction fields, but live population requires the backend /profile (or a dedicated /diet/restrictions endpoint) to expose current-care FoodRestriction data.
+
+Validation:
+- Changed-file source checks: PASS
+- Import check: PASS
+- No direct fetch/Axios in page: PASS
+- ZIP integrity: PASS

@@ -1,0 +1,27 @@
+import api, { multipartConfig } from '../client';
+
+export const doctorService = {
+  getHome() { return api.get('/doctor/home'); },
+  acknowledgeSos(alertId) { return api.post(`/doctor/sos/${alertId}/acknowledge`); },
+  getProfile() { return api.get('/doctor/profile'); },
+  updateProfile(payload) { return api.put('/doctor/profile', payload); },
+  setDutyStatus(dutyStatus) { return api.patch('/doctor/profile/duty-status', { dutyStatus }); },
+  uploadProfilePhoto(formData) { return api.post('/doctor/profile/photo', formData, multipartConfig()); },
+  getPatients() { return api.get('/doctor/patients'); },
+  getPatient(patientId) { return api.get(`/doctor/patients/${patientId}`); },
+  getPatientChatHistory(patientId) { return api.get(`/doctor/patients/${patientId}/chat-history`); },
+  updateRecoveryDays(patientId, delta) { return api.post(`/doctor/patients/${patientId}/recovery-days`, { delta }); },
+  dischargePatient(patientId) { return api.post(`/doctor/patients/${patientId}/discharge`); },
+  uploadPatientFile(patientId, formData) { return api.post(`/doctor/patients/${patientId}/files`, formData, multipartConfig()); },
+  deleteMedicine(patientId, medicineId) { return api.delete(`/doctor/patients/${patientId}/medicines/${medicineId}`); },
+  addNote(patientId, content) { return api.post(`/doctor/patients/${patientId}/notes`, { content }); },
+  addMedicine(patientId, payload) { return api.post(`/doctor/patients/${patientId}/medicines`, payload); },
+  addFoodRestriction(patientId, payload) { return api.post(`/doctor/patients/${patientId}/food-restrictions`, payload); },
+  getAppointments() { return api.get('/doctor/appointments'); },
+  completeAppointment(appointmentId) { return api.patch(`/doctor/appointments/${appointmentId}/complete`); },
+  rescheduleAppointment(appointmentId, payload) { return api.patch(`/doctor/appointments/${appointmentId}/reschedule`, payload); },
+  getInbox() { return api.get('/doctor/inbox'); },
+  getThreadMessages(threadId) { return api.get(`/doctor/inbox/${threadId}/messages`); },
+  sendThreadMessage(threadId, content) { return api.post(`/doctor/inbox/${threadId}/messages`, { content }); },
+  closeThread(threadId) { return api.patch(`/doctor/inbox/${threadId}/close`); },
+};

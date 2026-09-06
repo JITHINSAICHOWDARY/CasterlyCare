@@ -1,0 +1,76 @@
+CASTERLYCARE — PHASE 2.14.4 DOCTOR CRITICAL FLOW CHECK
+PASS: 73
+FAIL: 0
+PASS | DoctorHome.jsx exists
+PASS | DoctorHome.jsx balanced delimiters
+PASS | DoctorProfile.jsx exists
+PASS | DoctorProfile.jsx balanced delimiters
+PASS | DoctorPatients.jsx exists
+PASS | DoctorPatients.jsx balanced delimiters
+PASS | DoctorPatientDetails.jsx exists
+PASS | DoctorPatientDetails.jsx balanced delimiters
+PASS | DoctorAppointments.jsx exists
+PASS | DoctorAppointments.jsx balanced delimiters
+PASS | DoctorInbox.jsx exists
+PASS | DoctorInbox.jsx balanced delimiters
+PASS | Doctor route registered: /doctor
+PASS | Doctor route registered: /doctor/profile
+PASS | Doctor route registered: /doctor/patients
+PASS | Doctor route registered: /doctor/patients/:patientId
+PASS | Doctor route registered: /doctor/appointments
+PASS | Doctor route registered: /doctor/inbox
+PASS | Doctor service exposes home
+PASS | Doctor service exposes profile
+PASS | Doctor service exposes profile update
+PASS | Doctor service exposes duty status
+PASS | Doctor service exposes patients
+PASS | Doctor service exposes patient details
+PASS | Doctor service exposes files
+PASS | Doctor service exposes upload file
+PASS | Doctor service exposes notes
+PASS | Doctor service exposes add note
+PASS | Doctor service exposes medicines
+PASS | Doctor service exposes add medicine
+PASS | Doctor service exposes remove medicine
+PASS | Doctor service exposes restrictions
+PASS | Doctor service exposes add restriction
+PASS | Doctor service exposes appointments
+PASS | Doctor service exposes complete appointment
+PASS | Doctor service exposes reschedule appointment
+PASS | Doctor service exposes follow-up
+PASS | Doctor service exposes inbox
+PASS | Doctor service exposes inbox messages
+PASS | Doctor service exposes send message
+PASS | Doctor service exposes close thread
+PASS | DoctorHome.jsx wires getHome
+PASS | DoctorHome.jsx wires acknowledgeSos
+PASS | DoctorHome.jsx wires Appointment
+PASS | DoctorHome.jsx wires SOS
+PASS | DoctorProfile.jsx wires getProfile
+PASS | DoctorProfile.jsx wires updateProfile
+PASS | DoctorProfile.jsx wires duty
+PASS | DoctorPatients.jsx wires getPatients
+PASS | DoctorPatients.jsx wires Recovery
+PASS | DoctorPatientDetails.jsx wires getPatient
+PASS | DoctorPatientDetails.jsx wires Files
+PASS | DoctorPatientDetails.jsx wires Notes
+PASS | DoctorPatientDetails.jsx wires Medicines
+PASS | DoctorPatientDetails.jsx wires Restrictions
+PASS | DoctorAppointments.jsx wires getAppointments
+PASS | DoctorAppointments.jsx wires completeAppointment
+PASS | DoctorAppointments.jsx wires rescheduleAppointment
+PASS | DoctorInbox.jsx wires getInbox
+PASS | DoctorInbox.jsx wires getThreadMessages
+PASS | DoctorInbox.jsx wires sendThreadMessage
+PASS | DoctorInbox.jsx wires closeThread
+PASS | Doctor home has SOS acknowledgement flow
+PASS | Doctor home has appointment completion action
+PASS | Doctor profile exposes On-Duty/Off-Duty
+PASS | Patient details exposes recovery tracker
+PASS | Patient details exposes files/notes/medicines/restrictions
+PASS | Appointments has completed/reschedule actions
+PASS | Priority Inbox has temporary Chat ID lifecycle
+PASS | Priority Inbox has reply action
+PASS | Realtime recovery contract exists
+PASS | Realtime clinical record contract exists
+PASS | Realtime SOS contract exists

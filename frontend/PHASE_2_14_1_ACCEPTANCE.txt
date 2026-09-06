@@ -1,0 +1,21 @@
+CasterlyCare — Phase 2.14.1 Acceptance
+=====================================
+
+Frontend/backend integration validation harness created.
+
+Validated statically:
+- Required API service files and shared client boundaries.
+- Unified role route namespaces and navigation namespaces.
+- Central realtime event contract coverage.
+- Shared realtime subscribe/join/leave/publish lifecycle.
+- Browser online/offline handling.
+- No direct fetch/axios usage inside page components.
+- Patient emergency chat service contract.
+- Doctor Priority Inbox service contract.
+- Admin SOS service contract.
+- Auth context presence.
+
+Runtime dependency/build note:
+- npm ci --ignore-scripts --no-audit --no-fund timed out in the workspace.
+- Therefore npm/Vite build success is intentionally not claimed.
+- The integration checker is available as: npm run test:integration
