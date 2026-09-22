@@ -63,7 +63,6 @@ function isAppointmentActive(status) {
   return ![
     'cancelled',
     'completed',
-    'rescheduled',
   ].includes(
     String(
       status || ''
@@ -962,7 +961,6 @@ router.patch(
               [Op.notIn]: [
                 'cancelled',
                 'completed',
-                'rescheduled',
               ],
             },
           },
@@ -1017,7 +1015,6 @@ router.patch(
               [Op.notIn]: [
                 'cancelled',
                 'completed',
-                'rescheduled',
               ],
             },
           },

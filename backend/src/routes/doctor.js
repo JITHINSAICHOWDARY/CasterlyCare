@@ -48,6 +48,7 @@ const fs = require('fs');
 const path = require('path');
 const { respondIfSlotTaken } = require('../utils/conflicts');
 const { completeElapsedEpisodes } = require('../utils/episodes');
+const { isValidVisitSelection } = require('../utils/visitSelection');
 
 const router = express.Router();
 
@@ -179,42 +180,6 @@ async function hasPatientConflict(
   return Appointment.findOne({
     where,
   });
-}
-
-/**
- * Validate appointment category/service combination.
- */
-function isValidVisitSelection(
-  visitCategory,
-  serviceType
-) {
-  const homeServices = [
-    'dressing',
-    'physiotherapy',
-    'vitals_check',
-  ];
-
-  const hospitalServices = [
-    'doctor_visit',
-    'pharmacy_visit',
-  ];
-
-  if (visitCategory === 'home_visit') {
-    return homeServices.includes(
-      serviceType
-    );
-  }
-
-  if (
-    visitCategory ===
-    'hospital_visit'
-  ) {
-    return hospitalServices.includes(
-      serviceType
-    );
-  }
-
-  return false;
 }
 
 /**

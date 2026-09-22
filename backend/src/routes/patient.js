@@ -46,6 +46,7 @@ const {
 
 const { normalizePhone, isValidPhone } = require('../utils/phone');
 const { respondIfSlotTaken } = require('../utils/conflicts');
+const { isValidVisitSelection } = require('../utils/visitSelection');
 
 const {
   computeRecovery,
@@ -1823,6 +1824,18 @@ router.post(
         return res.status(400).json({
           error:
             'Please complete every step of the booking wizard.',
+        });
+      }
+
+      if (
+        !isValidVisitSelection(
+          visitCategory,
+          normalizedServiceType
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            'Invalid visit category or service type.',
         });
       }
 
