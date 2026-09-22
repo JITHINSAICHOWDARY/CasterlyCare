@@ -1,10 +1,13 @@
-export function PageHeader({ eyebrow, title, subtitle, action }) {
+import HamsterLoader from './HamsterLoader';
+
+export function PageHeader({ eyebrow, title, subtitle, action, children }) {
   return (
     <header className="page-header mb-6">
       <div className="min-w-0">
         {eyebrow ? <p className="eyebrow text-[var(--color-gold)] mb-1">{eyebrow}</p> : null}
         <h1 className="font-display text-3xl lg:text-4xl text-[var(--color-ink)] leading-tight">{title}</h1>
         {subtitle ? <p className="text-sm text-[var(--color-text-soft)] mt-1.5 max-w-3xl">{subtitle}</p> : null}
+        {children}
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </header>
@@ -13,10 +16,10 @@ export function PageHeader({ eyebrow, title, subtitle, action }) {
 
 export function SectionHeading({ title, subtitle, action }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+    <div className="section-heading flex flex-wrap items-start justify-between gap-3 mb-4">
       <div>
-        <h2 className="font-display text-xl text-[var(--color-ink)]">{title}</h2>
-        {subtitle ? <p className="text-sm text-[var(--color-text-soft)] mt-1">{subtitle}</p> : null}
+        <h2 className="section-heading-title font-display text-xl text-[var(--color-ink)]">{title}</h2>
+        {subtitle ? <p className="section-heading-sub text-sm text-[var(--color-text-soft)] mt-1">{subtitle}</p> : null}
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>
@@ -42,7 +45,7 @@ export function StatCard({ label, value, detail, accent = 'crimson', icon, trend
     danger: 'var(--color-danger)',
   };
   return (
-    <article className={`stat-card panel p-5 ${className}`}>
+    <article className={`stat-card panel p-5 ${className}`} data-accent={accent}>
       <div className="stat-card-top">
         <p className="table-heading text-[var(--color-text-soft)]">{label}</p>
         {icon ? <span className="stat-card-icon" aria-hidden="true">{icon}</span> : null}
@@ -137,7 +140,7 @@ export function Alert({ children, variant = 'ink', title }) {
 
 export function EmptyState({ title, subtitle, action }) {
   return (
-    <div className="text-center py-10 px-4">
+    <div className="empty-state text-center py-10 px-4">
       <p className="font-display text-lg text-[var(--color-ink)]">{title}</p>
       {subtitle ? <p className="text-sm text-[var(--color-text-soft)] mt-1 max-w-md mx-auto">{subtitle}</p> : null}
       {action ? <div className="mt-4">{action}</div> : null}
@@ -145,11 +148,15 @@ export function EmptyState({ title, subtitle, action }) {
   );
 }
 
+export function Skeleton({ className = '', style }) {
+  return <span className={`skeleton ${className}`} style={style} aria-hidden="true" />;
+}
+
+// Shown while a section's data loads. The label is read out to screen readers only.
 export function LoadingState({ label = 'Loading…' }) {
   return (
-    <div className="flex items-center justify-center gap-3 py-10 text-sm text-[var(--color-text-soft)]" role="status" aria-live="polite">
-      <Spinner />
-      <span>{label}</span>
+    <div className="loading-state">
+      <HamsterLoader size="sm" label={label} />
     </div>
   );
 }
@@ -221,7 +228,7 @@ function formatTime(h, m, period) {
   return `${h}:${m} ${period}`;
 }
 
-export function RecoveryDonut({ totalDays, daysRemaining, size = 160 }) {
+export function RecoveryDonut({ totalDays, daysRemaining, size = 160, showLabel = true }) {
   const safeTotal = Math.max(0, Number(totalDays) || 0);
   const safeRemaining = Math.max(0, Math.min(Number(daysRemaining) || 0, safeTotal));
   const daysDone = Math.max(0, safeTotal - safeRemaining);
@@ -234,8 +241,8 @@ export function RecoveryDonut({ totalDays, daysRemaining, size = 160 }) {
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img">
         <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="var(--color-parchment-deep)" strokeWidth="14" />
         <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="var(--color-crimson)" strokeWidth="14" strokeLinecap="round" strokeDasharray={`${dash} ${circumference - dash}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
-        <text x="50%" y="47%" textAnchor="middle" className="font-display" fontSize="28" fill="var(--color-ink)">{safeRemaining}</text>
-        <text x="50%" y="63%" textAnchor="middle" fontSize="11" fill="var(--color-text-soft)">days left</text>
+        <text x="50%" y={showLabel ? '47%' : '54%'} textAnchor="middle" className="font-display" fontSize="28" fill="var(--color-ink)">{safeRemaining}</text>
+        {showLabel ? <text x="50%" y="63%" textAnchor="middle" fontSize="11" fill="var(--color-text-soft)">days left</text> : null}
       </svg>
     </div>
   );

@@ -2,6 +2,7 @@ const cron = require('node-cron');
 
 const { CareEpisode, Surgery } = require('../models');
 const { computeRecovery } = require('./recovery');
+const { completeElapsedEpisodes } = require('./episodes');
 
 /*
  * Every read path that shows a recovery countdown now computes it live
@@ -47,7 +48,17 @@ async function refreshActiveRecoveryCounters() {
  * startup so stored values are correct right away rather than waiting
  * for the next scheduled tick (useful right after a deploy or restart).
  */
-function startRecoveryScheduler() {
+function startRecoveryScheduler(io) {
+  const finishElapsed = () =>
+    completeElapsedEpisodes(io).catch((err) => {
+      console.error('Completing elapsed recoveries failed:', err);
+    });
+
+  // A recovery ends the moment its days run out. Doctors' pages also check on
+  // load, so this only has to catch patients nobody is looking at.
+  finishElapsed();
+  cron.schedule('*/5 * * * *', finishElapsed);
+
   refreshActiveRecoveryCounters().catch((err) => {
     console.error('Initial recovery counter refresh failed:', err);
   });

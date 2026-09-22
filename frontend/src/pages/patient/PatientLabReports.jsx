@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import PatientDashboardShell from '../../components/PatientDashboardShell';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PatientDashboardShell } from '../../components/RoleDashboardShell';
 import { patientService } from '../../api/services/patient';
-import { API_BASE, apiErrorMessage, openSecureFile } from '../../api/client';
-import { Alert, Badge, Button, EmptyState, Field, Panel, PageHeader, SectionHeading } from '../../components/ui';
-
-// PHASE 2.6.5 — lab reports responsive and accessibility hardening
+import { apiErrorMessage, openSecureFile } from '../../api/client';
+import { Alert, Badge, Button, EmptyState, Field, Panel, PageHeader } from '../../components/ui';
+import GlassLensFilter from '../../components/GlassLensFilter';
+import { useRealtime } from '../../context/RealtimeContext';
+import { CLINICAL_RECORD_REALTIME_EVENTS } from '../../config/realtimeEvents';
 
 function safeDate(value) {
   if (!value) return null;
@@ -58,23 +59,6 @@ function formatFileSize(value) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function reportHref(fileUrl) {
-  if (!fileUrl) return '';
-  if (/^https?:\/\//i.test(fileUrl)) return fileUrl;
-  return `${API_BASE}${fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`}`;
-}
-
-function isTrustedReportHref(href) {
-  if (!href) return false;
-  try {
-    const url = new URL(href, window.location.origin);
-    const apiUrl = new URL(API_BASE, window.location.origin);
-    return url.origin === apiUrl.origin && url.pathname.startsWith('/uploads/patient_files/');
-  } catch {
-    return false;
-  }
-}
-
 function normalizeReport(file = {}) {
   return {
     ...file,
@@ -95,13 +79,12 @@ function uniqueTypes(files) {
   return ['all', ...Array.from(seen).sort()];
 }
 
-// PHASE 2.6.4 — lab report filtering, sorting, and document metadata UX
 export default function PatientLabReports() {
+  const { subscribe } = useRealtime();
   const [unlocked, setUnlocked] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [files, setFiles] = useState([]);
   const [lastLoadedAt, setLastLoadedAt] = useState(null);
   const [stepUpToken, setStepUpToken] = useState('');
@@ -113,7 +96,6 @@ export default function PatientLabReports() {
   const vaultHeadingRef = useRef(null);
 
   const normalizedFiles = useMemo(() => files.map(normalizeReport), [files]);
-
   const reportTypes = useMemo(() => uniqueTypes(normalizedFiles), [normalizedFiles]);
 
   const filteredFiles = useMemo(() => {
@@ -137,13 +119,9 @@ export default function PatientLabReports() {
 
   const reportCountLabel = useMemo(
     () => `${normalizedFiles.length} ${normalizedFiles.length === 1 ? 'document' : 'documents'}`,
-    [normalizedFiles.length]
+    [normalizedFiles.length],
   );
-
-  const filteredCountLabel = useMemo(
-    () => `${filteredFiles.length} shown`,
-    [filteredFiles.length]
-  );
+  const filteredCountLabel = useMemo(() => `${filteredFiles.length} shown`, [filteredFiles.length]);
 
   useEffect(() => {
     if (!unlocked) passwordRef.current?.focus();
@@ -190,26 +168,19 @@ export default function PatientLabReports() {
       const status = err?.response?.status;
       setError(
         status === 401 || status === 403
-          ? 'The account password could not be verified. No report links were released. Please check your password and try again.'
+          ? 'The account password could not be verified.'
           : err?.code === 'ECONNABORTED'
-            ? 'The secure verification request timed out. Your report access was not changed. Please try again.'
-            : err?.response?.data?.error || 'We could not complete secure verification. No report links were released. Please try again.'
+            ? 'The secure verification request timed out. Please try again.'
+            : err?.response?.data?.error || 'We could not complete secure verification. Please try again.',
       );
     } finally {
       setBusy(false);
     }
   }
 
-  async function refreshReports() {
-    setRefreshing(true);
-    setError('');
+  const refreshReports = useCallback(async () => {
+    if (!stepUpToken) return;
     try {
-      if (!stepUpToken) {
-        setUnlocked(false);
-        setFiles([]);
-        setError('Your secure access session is no longer available. No report links can be opened until you verify your password again.');
-        return;
-      }
       const res = await patientService.getLabReports(stepUpToken);
       setFiles(Array.isArray(res?.data?.files) ? res.data.files : []);
       setLastLoadedAt(new Date());
@@ -219,85 +190,74 @@ export default function PatientLabReports() {
         setUnlocked(false);
         setFiles([]);
         setStepUpToken('');
-        setError('Your secure access session has expired. The report list has been locked again. Re-enter your password to continue.');
-      } else {
-        setError(
-          err?.code === 'ECONNABORTED'
-            ? 'The secure refresh request timed out. Your last available report list is still shown.'
-            : err?.response?.data?.error || 'We could not refresh your lab reports. Your last available report list is still shown.'
-        );
+        setError('Your secure access session has expired. Re-enter your password to continue.');
       }
-    } finally {
-      setRefreshing(false);
     }
-  }
+  }, [stepUpToken]);
+
+  // A doctor uploading a new file pushes this event; silently pull the
+  // latest list in the background — there's no manual refresh control.
+  useEffect(() => {
+    if (!unlocked) return undefined;
+    const cleanups = CLINICAL_RECORD_REALTIME_EVENTS.map((eventName) =>
+      subscribe(eventName, () => refreshReports()),
+    );
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [subscribe, unlocked, refreshReports]);
 
   return (
     <PatientDashboardShell>
-      <PageHeader
-        eyebrow="Private medical records"
-        title="Lab Reports"
-        subtitle="Your reports are protected by an additional password check before the secure document links are released."
-      />
+      <div className="patient-lab-reports-page">
+      <GlassLensFilter />
+      <PageHeader title="Lab Reports" subtitle="Verify your password to view your secure medical documents." />
 
       {!unlocked ? (
-        <Panel className="max-w-xl">
-          <SectionHeading
-            eyebrow="Step-up verification"
-            title="Unlock your lab reports"
-            description="Re-enter your CasterlyCare account password. This additional check protects sensitive medical documents even when your normal session is already signed in."
-          />
-          <form onSubmit={unlockReports} className="space-y-4 mt-5" aria-busy={busy}>
-            <Field
-              label="Account password"
-              hint="Your password is verified by the secure account service. It is not displayed or stored on this page."
-              required
-            >
-              <input
-                ref={passwordRef}
-                type="password"
-                required
-                autoComplete="current-password"
-                className="field-input"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                aria-describedby="lab-reports-security-note"
-              />
-            </Field>
-            <p id="lab-reports-security-note" className="text-xs text-[var(--color-text-soft)]">
-              Access is temporary. Leaving this page or an expired secure session will require verification again.
-            </p>
-            {error ? (
-              <div ref={feedbackRef} tabIndex={-1} className="focus:outline-none" role="alert" aria-live="assertive">
-                <Alert variant="danger" title="Secure verification issue">{error}</Alert>
-              </div>
-            ) : null}
-            <Button type="submit" variant="primary" className="w-full" loading={busy} disabled={busy}>
-              {busy ? 'Verifying securely…' : 'Unlock Lab Reports'}
-            </Button>
-          </form>
-        </Panel>
+        <div className="flex min-h-[55vh] items-center justify-center">
+          <div className="w-full max-w-2xl space-y-5">
+            <Panel>
+              <h2 className="font-display text-2xl text-[var(--color-ink)] mb-4">Unlock your lab reports</h2>
+              <form onSubmit={unlockReports} className="space-y-4" aria-busy={busy}>
+                <Field
+                  label="Account password"
+                  hint="This extra check protects sensitive medical documents even when you're already signed in."
+                  required
+                >
+                  <input
+                    ref={passwordRef}
+                    type="password"
+                    required
+                    autoComplete="current-password"
+                    className="field-input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </Field>
+                {error ? (
+                  <div ref={feedbackRef} tabIndex={-1} className="focus:outline-none" role="alert" aria-live="assertive">
+                    <Alert variant="danger" title="Secure verification issue">{error}</Alert>
+                  </div>
+                ) : null}
+                <Button type="submit" variant="primary" className="w-full" loading={busy} disabled={busy}>
+                  {busy ? 'Verifying…' : 'Unlock Lab Reports'}
+                </Button>
+              </form>
+            </Panel>
+
+            <Alert variant="ink" title="Privacy reminder">
+              These documents contain sensitive medical information. Avoid saving or sharing copies on public or shared devices.
+            </Alert>
+          </div>
+        </div>
       ) : (
         <div className="space-y-5">
           <Panel>
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div>
-                <div ref={vaultHeadingRef} tabIndex={-1} className="focus:outline-none" aria-live="polite">
-                <SectionHeading
-                  eyebrow="Secure document vault"
-                  title="Your reports"
-                  description="Only documents returned after successful step-up verification are shown here."
-                />
-                </div>
-                <div className="flex flex-wrap items-center gap-2 mt-4" aria-label="Lab report summary">
-                  <Badge variant="ink" aria-label={`Total lab reports: ${reportCountLabel}`}>{reportCountLabel}</Badge>
-                  <span aria-live="polite"><Badge variant="neutral">{filteredCountLabel}</Badge></span>
-                  {lastLoadedAt ? <span className="text-xs text-[var(--color-text-soft)]">Last checked {lastLoadedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span> : null}
-                </div>
+            <div ref={vaultHeadingRef} tabIndex={-1} className="focus:outline-none" aria-live="polite">
+              <h2 className="font-display text-lg text-[var(--color-ink)]">Your reports</h2>
+              <div className="flex flex-wrap items-center gap-2 mt-3" aria-label="Lab report summary">
+                <Badge variant="ink" aria-label={`Total lab reports: ${reportCountLabel}`}>{reportCountLabel}</Badge>
+                <span aria-live="polite"><Badge variant="neutral">{filteredCountLabel}</Badge></span>
+                {lastLoadedAt ? <span className="text-xs text-[var(--color-text-soft)]">Last checked {lastLoadedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span> : null}
               </div>
-              <Button type="button" variant="secondary" onClick={refreshReports} loading={refreshing}>
-                Refresh reports
-              </Button>
             </div>
 
             <div className="lab-reports-toolbar mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_11rem_11rem_auto]">
@@ -309,7 +269,7 @@ export default function PatientLabReports() {
                   className="field-input"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search by report name or category"
+                  placeholder="Search by name or category"
                   aria-label="Search lab reports"
                 />
               </Field>
@@ -336,14 +296,9 @@ export default function PatientLabReports() {
             </div>
           </Panel>
 
-          {error ? <Alert variant={unlocked ? 'warning' : 'danger'} title="Secure report access">{error}</Alert> : null}
+          {error ? <Alert variant="warning" title="Secure report access">{error}</Alert> : null}
 
           <Panel>
-            <div className="mb-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-muted)] p-4" role="note">
-              <p className="text-sm font-semibold text-[var(--color-ink)]">Secure access is active for this session</p>
-              <p className="text-xs text-[var(--color-text-soft)] mt-1">Report links are issued only after successful password verification and expire when your secure access session expires.</p>
-            </div>
-
             {normalizedFiles.length === 0 ? (
               <EmptyState
                 title="No reports uploaded yet"
@@ -352,7 +307,7 @@ export default function PatientLabReports() {
             ) : filteredFiles.length === 0 ? (
               <EmptyState
                 title="No reports match your filters"
-                subtitle="Try another search term or document type. Your secure report list is unchanged."
+                subtitle="Try another search term or document type."
                 action={<Button type="button" variant="secondary" onClick={clearFilters}>Clear filters</Button>}
               />
             ) : (
@@ -377,12 +332,12 @@ export default function PatientLabReports() {
                           {reportTypeLabel(file.fileType)}{sizeLabel ? ` · ${sizeLabel}` : ''} · {formatReportDateTime(file.createdAt)}
                         </p>
                         {description ? <p className="text-xs text-[var(--color-text-soft)] mt-2 break-words">{description}</p> : null}
-                        <p className="text-xs text-[var(--color-text-soft)] mt-1">Opens through the protected CasterlyCare document endpoint.</p>
                       </div>
                       <div className="lab-report-card__action flex items-center gap-3 shrink-0">
                         {isSecureFile ? (
-                          <button
+                          <Button
                             type="button"
+                            variant="secondary"
                             onClick={async () => {
                               try {
                                 await openSecureFile(file.fileUrl, stepUpToken ? { 'X-Step-Up-Token': stepUpToken } : {});
@@ -390,12 +345,10 @@ export default function PatientLabReports() {
                                 setError(apiErrorMessage(err) || 'Unable to open this report. Please try again.');
                               }
                             }}
-                            className="btn btn-secondary btn-sm"
                             aria-label={`Open ${file.label} securely in a new tab`}
-                            title="Opens in a new tab"
                           >
-                            Open securely ↗
-                          </button>
+                            Open ↗
+                          </Button>
                         ) : (
                           <span className="text-xs text-[var(--color-text-soft)]" role="status">Secure link unavailable</span>
                         )}
@@ -408,14 +361,11 @@ export default function PatientLabReports() {
           </Panel>
 
           <Alert variant="ink" title="Privacy reminder">
-            These documents contain sensitive medical information. Use the secure link provided here and avoid saving or sharing copies on public or shared devices.
+            These documents contain sensitive medical information. Avoid saving or sharing copies on public or shared devices.
           </Alert>
-
-          <div className="text-xs text-[var(--color-text-soft)]">
-            Automated access controls protect the vault; they do not change the medical content of your records.
-          </div>
         </div>
       )}
+      </div>
     </PatientDashboardShell>
   );
 }

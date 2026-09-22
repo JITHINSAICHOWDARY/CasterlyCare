@@ -1,6 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { OAuth2Client } = require('google-auth-library');
 const { body, validationResult } = require('express-validator');
 
 const sequelize = require('../config/db');
@@ -11,11 +12,19 @@ const {
   PatientProfile,
   Surgery,
   CareEpisode,
+  OtpCode,
 } = require('../models');
 
 const { authenticate } = require('../middleware/auth');
+const { generateOtpCode, sendOtpSms, smsConfigured } = require('../utils/otp');
+const { normalizePhone, isValidPhone } = require('../utils/phone');
+const { normalizeRecoveryDays } = require('../utils/recovery');
 
 const router = express.Router();
+const googleClient = process.env.GOOGLE_CLIENT_ID ? new OAuth2Client(process.env.GOOGLE_CLIENT_ID) : null;
+const OTP_TTL_MINUTES = 5;
+const OTP_RESEND_COOLDOWN_SECONDS = 45;
+const OTP_MAX_ATTEMPTS = 5;
 
 /* =========================================================
    HELPERS
@@ -28,6 +37,9 @@ function signToken(user) {
       role: user.role,
       email: user.email,
       name: user.name,
+      // Password version: changing the password changes this, so every token
+      // issued before the change stops working (see middleware/auth.js).
+      pv: user.passwordChangedAt ? new Date(user.passwordChangedAt).getTime() : 0,
     },
     process.env.JWT_SECRET,
     {
@@ -46,27 +58,6 @@ function publicUser(user) {
   };
 }
 
-function normalizeRecoveryDays(value) {
-  if (
-    value === undefined ||
-    value === null ||
-    value === ''
-  ) {
-    return 14;
-  }
-
-  const days = Number(value);
-
-  if (
-    !Number.isInteger(days) ||
-    days < 1 ||
-    days > 365
-  ) {
-    return null;
-  }
-
-  return days;
-}
 
 /* =========================================================
    LOGIN
@@ -161,6 +152,181 @@ router.post(
         error:
           'Unable to complete login.',
       });
+    }
+  }
+);
+
+/* =========================================================
+   OTP LOGIN (mobile number)
+   ========================================================= */
+
+/*
+ * OTP is an alternate way to sign in to an EXISTING account — it does not
+ * create new accounts. Patient accounts are only created through the
+ * doctor-ID signup flow above, so an unrecognized phone number here is
+ * rejected the same way an unrecognized email is at /login.
+ */
+router.post(
+  '/otp/request',
+  async (req, res) => {
+    try {
+      const phone = normalizePhone(req.body.phone);
+      if (!isValidPhone(phone)) {
+        return res.status(400).json({ error: 'Enter a valid 10-digit mobile number.' });
+      }
+
+      const user = await User.findOne({ where: { phone } });
+      if (user && !user.isActive) {
+        return res.status(403).json({ error: 'This account has been deactivated. Please contact the hospital administrator.' });
+      }
+
+      // A missing account falls through to the same "sent" response below
+      // instead of a distinct 404 — otherwise this endpoint would let
+      // anyone enumerate which phone numbers have real accounts, unlike
+      // /login next door, which never reveals that on its own.
+      if (user) {
+        const existing = await OtpCode.findOne({ where: { phone } });
+        if (existing) {
+          const secondsSinceLastSend = (Date.now() - new Date(existing.updatedAt).getTime()) / 1000;
+          if (secondsSinceLastSend < OTP_RESEND_COOLDOWN_SECONDS) {
+            return res.status(429).json({
+              error: 'Please wait before requesting another code.',
+              resendInSeconds: Math.ceil(OTP_RESEND_COOLDOWN_SECONDS - secondsSinceLastSend),
+            });
+          }
+        }
+      }
+
+      let devCode;
+      if (user) {
+        const code = generateOtpCode();
+        const codeHash = await bcrypt.hash(code, 10);
+        const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+
+        await OtpCode.upsert({ phone, codeHash, expiresAt, attempts: 0 });
+        await sendOtpSms(phone, code);
+
+        // Fallback-mode only (no SMS provider configured) — never sent in production
+        // once TWOFACTOR_API_KEY is set, matching the LLM integration's fallback pattern.
+        if (!smsConfigured && process.env.NODE_ENV !== 'production') devCode = code;
+      }
+
+      return res.json({
+        sent: true,
+        resendInSeconds: OTP_RESEND_COOLDOWN_SECONDS,
+        ...(devCode ? { devCode } : {}),
+      });
+    } catch (error) {
+      console.error('POST /auth/otp/request error:', error);
+      return res.status(500).json({ error: 'Unable to send verification code.' });
+    }
+  }
+);
+
+router.post(
+  '/otp/verify',
+  [body('code').trim().isLength({ min: 6, max: 6 }).withMessage('Enter the 6-digit code.')],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const phone = normalizePhone(req.body.phone);
+      if (!isValidPhone(phone)) {
+        return res.status(400).json({ error: 'Enter a valid 10-digit mobile number.' });
+      }
+      const code = String(req.body.code).trim();
+
+      const otp = await OtpCode.findOne({ where: { phone } });
+      if (!otp || otp.expiresAt < new Date()) {
+        return res.status(400).json({ error: 'That code has expired. Please request a new one.' });
+      }
+      if (otp.attempts >= OTP_MAX_ATTEMPTS) {
+        await otp.destroy();
+        return res.status(429).json({ error: 'Too many incorrect attempts. Please request a new code.' });
+      }
+
+      const valid = await bcrypt.compare(code, otp.codeHash);
+      if (!valid) {
+        await otp.increment('attempts');
+        return res.status(400).json({ error: 'Incorrect code. Please try again.' });
+      }
+
+      const user = await User.findOne({ where: { phone } });
+      if (!user || !user.isActive) {
+        return res.status(403).json({ error: 'This account is not available.' });
+      }
+
+      await otp.destroy();
+
+      const token = signToken(user);
+      return res.json({ token, user: publicUser(user) });
+    } catch (error) {
+      console.error('POST /auth/otp/verify error:', error);
+      return res.status(500).json({ error: 'Unable to verify code.' });
+    }
+  }
+);
+
+/* =========================================================
+   GOOGLE SIGN-IN
+   ========================================================= */
+
+/*
+ * Verifies the ID token from Google Identity Services (the credential
+ * a "Sign in with Google" button hands back), then signs in the EXISTING
+ * account matching that Google email — same reasoning as OTP above: this
+ * app's accounts are provisioned via admin/doctor flows, not self-serve,
+ * so a Google email with no matching account is rejected, not auto-created.
+ */
+router.post(
+  '/google',
+  [body('credential').notEmpty().withMessage('Missing Google credential.')],
+  async (req, res) => {
+    if (!googleClient) {
+      return res.status(501).json({ error: 'Google sign-in is not configured on this server.' });
+    }
+
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const ticket = await googleClient.verifyIdToken({
+        idToken: req.body.credential,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      const payload = ticket.getPayload();
+      const email = String(payload.email || '').toLowerCase().trim();
+
+      if (!payload.email_verified || !email) {
+        return res.status(401).json({ error: 'Google account email is not verified.' });
+      }
+
+      // Doesn't reveal a missing account distinctly from other failures —
+      // otherwise this endpoint would let anyone enumerate which emails
+      // have a CasterlyCare account by trying Google sign-in with them.
+      const user = await User.findOne({ where: { email } });
+      if (!user) {
+        return res.status(401).json({ error: 'We could not sign you in with that Google account.' });
+      }
+      if (!user.isActive) {
+        return res.status(403).json({ error: 'This account has been deactivated. Please contact the hospital administrator.' });
+      }
+
+      if (!user.googleId) {
+        user.googleId = payload.sub;
+        await user.save();
+      }
+
+      const token = signToken(user);
+      return res.json({ token, user: publicUser(user) });
+    } catch (error) {
+      console.error('POST /auth/google error:', error);
+      return res.status(400).json({ error: 'Unable to verify Google sign-in.' });
     }
   }
 );
@@ -308,18 +474,25 @@ router.post(
         'Doctor ID is required.'
       ),
 
-    body('surgeryName')
-      .trim()
-      .notEmpty()
+    body('acceptedTerms')
+      .custom((value) => value === true)
       .withMessage(
-        'Surgery name is required.'
+        'You must accept the Terms and Privacy Policy to create an account.'
       ),
+
+    body('surgeryName')
+      .optional({
+        nullable: true,
+      })
+      .trim(),
 
     body('phone')
       .optional({
         nullable: true,
       })
-      .trim(),
+      .trim()
+      .custom((value) => !value || isValidPhone(value))
+      .withMessage('Enter a valid 10-digit mobile number.'),
 
     body('address')
       .optional({
@@ -381,8 +554,8 @@ router.post(
           .toUpperCase();
 
       const normalizedSurgeryName =
-        String(surgeryName)
-          .trim();
+        String(surgeryName || '')
+          .trim() || 'Procedure pending';
 
       const recoveryDays =
         normalizeRecoveryDays(
@@ -496,9 +669,7 @@ router.post(
 
             phone:
               phone
-                ? String(
-                    phone
-                  ).trim()
+                ? normalizePhone(phone)
                 : null,
 
             isActive:
@@ -675,6 +846,79 @@ router.post(
         error:
           'Unable to complete patient registration.',
       });
+    }
+  }
+);
+
+/* =========================================================
+   CHANGE PASSWORD
+   ========================================================= */
+
+// ponytail: in-memory attempt limiter, per process. Move to a shared store
+// (Redis) if the API ever runs on more than one instance.
+const passwordAttempts = new Map();
+const PASSWORD_MAX_ATTEMPTS = 5;
+const PASSWORD_WINDOW_MS = 15 * 60 * 1000;
+
+router.post(
+  '/change-password',
+  authenticate,
+  async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body || {};
+
+      if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || !currentPassword || !newPassword) {
+        return res.status(400).json({ error: 'Enter your current password and a new one.' });
+      }
+
+      if (newPassword.length < 8 || newPassword.length > 72) {
+        return res.status(400).json({ error: 'The new password must be 8 to 72 characters long.' });
+      }
+
+      if (newPassword === currentPassword) {
+        return res.status(400).json({ error: 'Choose a password different from your current one.' });
+      }
+
+      const now = Date.now();
+      const entry = passwordAttempts.get(req.user.id);
+
+      if (entry && entry.resetAt > now && entry.count >= PASSWORD_MAX_ATTEMPTS) {
+        return res.status(429).json({
+          error: 'Too many incorrect attempts. Try again in a few minutes.',
+        });
+      }
+
+      const user = await User.findByPk(req.user.id);
+
+      if (!user) {
+        return res.status(404).json({ error: 'User not found.' });
+      }
+
+      const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+
+      if (!matches) {
+        const fresh = entry && entry.resetAt > now ? entry : { count: 0, resetAt: now + PASSWORD_WINDOW_MS };
+        fresh.count += 1;
+        passwordAttempts.set(req.user.id, fresh);
+
+        // 400, not 401: the client treats 401 as "session expired" and logs out.
+        return res.status(400).json({ error: 'Your current password is incorrect.' });
+      }
+
+      passwordAttempts.delete(req.user.id);
+
+      user.passwordHash = await bcrypt.hash(newPassword, 10);
+      user.passwordChangedAt = new Date(now);
+      await user.save();
+
+      return res.json({
+        message: 'Password changed. Other devices have been signed out.',
+        token: signToken(user),
+      });
+    } catch (error) {
+      console.error('POST /auth/change-password error:', error);
+
+      return res.status(500).json({ error: 'Unable to change password.' });
     }
   }
 );

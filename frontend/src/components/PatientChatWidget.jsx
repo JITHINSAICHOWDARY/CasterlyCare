@@ -1,6 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { patientService } from '../api/services/patient';
 import { useRealtime } from '../context/RealtimeContext';
+import HamsterLoader from './HamsterLoader';
+import kingslayerGif from '../assets/kingslayer.gif';
+import emergencyGif from '../assets/emergency.gif';
+import drogonGif from '../assets/drogon.gif';
 
 function getFocusable(container) {
   if (!container) return [];
@@ -133,17 +137,17 @@ export default function PatientChatWidget() {
               <button ref={menuCloseRef} type="button" className="patient-chat-menu-close" onClick={() => setOpen(false)} aria-label="Close chat options">×</button>
             </div>
             <button type="button" role="menuitem" onClick={() => openMode('kingslayer')} className="patient-chat-option">
-              <span className="support-tool-hint" aria-hidden="true">🗡️</span>
+              <span className="support-tool-hint" aria-hidden="true"><img src={kingslayerGif} alt="" /></span>
               <span className="min-w-0 text-left">
                 <span className="patient-chat-option-title">Kingslayer</span>
-                <span className="patient-chat-option-copy">Ask about recovery, medicines, diet, or using CasterlyCare.</span>
+                <span className="patient-chat-option-copy">Your AI Chatbot</span>
               </span>
             </button>
             <button type="button" role="menuitem" onClick={() => openMode('emergency')} className="patient-chat-option patient-chat-option-emergency">
-              <span className="patient-chat-option-icon patient-chat-option-icon-emergency" aria-hidden="true">🚨</span>
+              <span className="patient-chat-option-icon patient-chat-option-icon-emergency" aria-hidden="true"><img src={emergencyGif} alt="" /></span>
               <span className="min-w-0 text-left">
                 <span className="patient-chat-option-title">Emergency Chat</span>
-                <span className="patient-chat-option-copy">Send an urgent message directly to your doctor.</span>
+                <span className="patient-chat-option-copy">Directly connect with doctor</span>
               </span>
             </button>
             <p className="patient-chat-disclaimer">For immediate life-threatening danger, call local emergency services. Emergency Chat is not a replacement for emergency response.</p>
@@ -160,7 +164,7 @@ export default function PatientChatWidget() {
           aria-controls={menuId}
           aria-label={open ? 'Close patient chat options' : 'Open patient chat options'}
         >
-          <span aria-hidden="true">{open ? '×' : '✉'}</span>
+          {open ? <span aria-hidden="true">×</span> : <img src={drogonGif} alt="" className="patient-chat-fab-gif" />}
         </button>
       </div>
 
@@ -170,7 +174,7 @@ export default function PatientChatWidget() {
   );
 }
 
-function ChatShell({ title, subtitle, onClose, children, tone = 'default', restoreRef, initialFocusRef }) {
+function ChatShell({ title, subtitle, icon, onClose, children, tone = 'default', restoreRef, initialFocusRef }) {
   const shellRef = useRef(null);
   const { subscribe, joinThread, leaveThread } = useRealtime();
   const generatedTitleId = useId();
@@ -182,9 +186,12 @@ function ChatShell({ title, subtitle, onClose, children, tone = 'default', resto
     <div className="patient-chat-backdrop fixed inset-0 z-50 flex items-end justify-center p-3 sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
       <div ref={shellRef} className={`patient-chat-shell patient-chat-shell-${tone}`} role="dialog" aria-modal="true" aria-labelledby={generatedTitleId} aria-describedby={generatedDescriptionId}>
         <div className="patient-chat-header">
-          <div className="min-w-0">
-            <p id={generatedTitleId} className="font-display text-lg text-[var(--color-ink)]">{title}</p>
-            <p id={generatedDescriptionId} className="text-xs text-[var(--color-text-soft)] mt-0.5">{subtitle}</p>
+          <div className="flex items-center gap-3 min-w-0">
+            {icon ? <span className="support-tool-hint" aria-hidden="true">{icon}</span> : null}
+            <div className="min-w-0">
+              <p id={generatedTitleId} className="font-display text-lg text-[var(--color-ink)]">{title}</p>
+              <p id={generatedDescriptionId} className="text-xs text-[var(--color-text-soft)] mt-0.5">{subtitle}</p>
+            </div>
           </div>
           <button type="button" onClick={onClose} className="patient-chat-close" aria-label={`Close ${title}`}>×</button>
         </div>
@@ -227,7 +234,7 @@ function KingslayerModal({ onClose, restoreRef }) {
   }
 
   return (
-    <ChatShell title="Kingslayer" subtitle="AI recovery assistant · multilingual" onClose={onClose} tone="assistant" restoreRef={restoreRef} initialFocusRef={inputRef}>
+    <ChatShell title="Kingslayer" subtitle="AI recovery assistant · multilingual" icon={<img src={kingslayerGif} alt="" />} onClose={onClose} tone="assistant" restoreRef={restoreRef} initialFocusRef={inputRef}>
       <div className="patient-chat-messages" aria-live="polite" aria-label="Kingslayer conversation">
         <div className="patient-chat-context-note" role="note">Kingslayer provides general recovery support and does not diagnose emergencies.</div>
         {messages.map((message, index) => (
@@ -299,11 +306,17 @@ function EmergencyChatModal({ onClose, restoreRef }) {
         setMessages((items) => (items.some((item) => item.id === message.id) ? items : [...items, message]));
       }
     });
+    // The doctor closed (or discharged) this chat: end it here too, so a message
+    // isn't typed into a conversation that has been archived.
+    const unsubscribeClosed = subscribe('chat_closed', (event) => {
+      if (event?.threadId === thread.id) onClose?.();
+    });
     return () => {
       leaveThread(thread.id);
       unsubscribe();
+      unsubscribeClosed();
     };
-  }, [thread, joinThread, leaveThread, subscribe]);
+  }, [thread, joinThread, leaveThread, subscribe, onClose]);
 
   useEffect(() => {
     if (!thread || !realtimeConnected || !lastConnectedAt) return;
@@ -347,9 +360,12 @@ function EmergencyChatModal({ onClose, restoreRef }) {
     <div className="patient-chat-backdrop fixed inset-0 z-50 flex items-end justify-center p-3 sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
       <div ref={shellRef} className="patient-chat-shell patient-chat-shell-emergency" role="dialog" aria-modal="true" aria-labelledby="emergency-chat-title" aria-describedby="emergency-chat-subtitle">
         <div className="patient-chat-header">
-          <div className="min-w-0">
-            <p id="emergency-chat-title" className="font-display text-lg text-[var(--color-ink)]">Emergency Chat</p>
-            <p id="emergency-chat-subtitle" className="text-xs text-[var(--color-text-soft)] mt-0.5">{thread ? `Temporary Chat ID: ${thread.chatCode}` : 'Connecting to your care team…'}</p>
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="support-tool-hint support-tool-hint-emergency" aria-hidden="true"><img src={emergencyGif} alt="" /></span>
+            <div className="min-w-0">
+              <p id="emergency-chat-title" className="font-display text-lg text-[var(--color-ink)]">Emergency Chat</p>
+              <p id="emergency-chat-subtitle" className="text-xs text-[var(--color-text-soft)] mt-0.5">{thread ? `Temporary Chat ID: ${thread.chatCode}` : 'Connecting to your care team…'}</p>
+            </div>
           </div>
           <button type="button" onClick={onClose} className="patient-chat-close" aria-label="Close Emergency Chat">×</button>
         </div>
@@ -360,7 +376,10 @@ function EmergencyChatModal({ onClose, restoreRef }) {
         </div>
         <div className="patient-chat-messages" aria-live="polite" aria-label="Emergency Chat conversation">
           {loading ? (
-            <div className="patient-chat-empty-state" role="status"><span className="spinner" aria-hidden="true" /> Connecting you to your doctor…</div>
+            <div className="patient-chat-empty-state patient-chat-empty-state-loading">
+              <HamsterLoader size="sm" label="Connecting you to your doctor…" />
+              <p aria-hidden="true">Connecting you to your doctor…</p>
+            </div>
           ) : error && !thread ? (
             <div className="patient-chat-empty-state patient-chat-empty-state-error" role="alert">{error}</div>
           ) : messages.length === 0 ? (

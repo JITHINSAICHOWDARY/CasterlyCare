@@ -436,6 +436,15 @@ async function callLLM(
 
               max_tokens:
                 maxTokens,
+
+              // Reasoning models (e.g. Gemini) otherwise spend the whole
+              // completion budget on hidden "thinking" tokens before
+              // emitting the visible reply, truncating short answers to
+              // nothing — this app only needs quick, concise output, not
+              // deep reasoning. Ignored harmlessly by providers that don't
+              // support it.
+              reasoning_effort:
+                'none',
             }),
 
           signal:

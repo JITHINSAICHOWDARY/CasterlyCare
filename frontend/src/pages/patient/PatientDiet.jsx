@@ -1,17 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { patientService } from '../../api/services/patient';
 import { apiErrorMessage } from '../../api/client';
-import PatientDashboardShell from '../../components/PatientDashboardShell';
+import { PatientDashboardShell } from '../../components/RoleDashboardShell';
 import {
-  Alert,
   Badge,
   Button,
-  EmptyState,
-  Field,
   Panel,
   PageHeader,
-  SectionHeading,
 } from '../../components/ui';
+import GlassLensFilter from '../../components/GlassLensFilter';
+import { useRealtime } from '../../context/RealtimeContext';
+import { CLINICAL_RECORD_REALTIME_EVENTS } from '../../config/realtimeEvents';
 
 const STATUS_VARIANT = {
   Safe: 'forest',
@@ -19,39 +18,8 @@ const STATUS_VARIANT = {
   Restricted: 'danger',
 };
 
-const STATUS_COPY = {
-  Safe: {
-    title: 'Safe according to the current check',
-    detail:
-      'No restriction conflict was identified by the automated check. Continue to follow your clinician-configured dietary restrictions.',
-    variant: 'success',
-  },
-  Caution: {
-    title: 'Caution recommended',
-    detail:
-      'The automated check identified factors that may need care or clarification. Review the explanation before deciding what to eat.',
-    variant: 'warning',
-  },
-  Restricted: {
-    title: 'Restricted by the current check',
-    detail:
-      "The automated check found a restriction concern. Do not treat this result as a diagnosis; follow your clinician's dietary instructions.",
-    variant: 'danger',
-  },
-};
-
 const MAX_QUERY_LENGTH = 240;
 const MAX_HISTORY_ITEMS = 12;
-
-function formatCheckedAt(value) {
-  if (!value) return 'Time unavailable';
-
-  const date = value instanceof Date ? value : new Date(value);
-
-  return Number.isNaN(date.getTime())
-    ? 'Time unavailable'
-    : date.toLocaleString();
-}
 
 function normalizeResult(result) {
   const status = ['Safe', 'Caution', 'Restricted'].includes(result?.status)
@@ -123,53 +91,38 @@ export default function PatientDiet() {
   const [history, setHistory] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [lastCheckedAt, setLastCheckedAt] = useState(null);
   const [activeRestrictions, setActiveRestrictions] = useState([]);
   const [restrictionsNotice, setRestrictionsNotice] = useState('');
 
   const inputRef = useRef(null);
+  const scrollRef = useRef(null);
+  const { subscribe } = useRealtime();
+
+  const loadRestrictions = useCallback(async () => {
+    try {
+      const res = await patientService.getDietRestrictions();
+      const restrictions = normalizeRestrictions(res?.data?.restrictions);
+      setActiveRestrictions(restrictions);
+      setRestrictionsNotice(
+        restrictions.length
+          ? ''
+          : 'No active dietary restrictions are currently available in your care record.'
+      );
+    } catch (err) {
+      setRestrictionsNotice(apiErrorMessage(err));
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadRestrictions() {
-      try {
-        const res = await patientService.getProfile();
-
-        const source =
-          res?.data?.activeCareEpisode ||
-          res?.data?.currentCareEpisode ||
-          res?.data;
-
-        const restrictions = normalizeRestrictions(
-          source?.foodRestrictions ||
-            source?.food_restrictions ||
-            source?.dietaryRestrictions ||
-            source?.restrictions
-        );
-
-        if (!cancelled) {
-          setActiveRestrictions(restrictions);
-
-          setRestrictionsNotice(
-            restrictions.length
-              ? ''
-              : 'No active dietary restrictions are currently available in your care record.'
-          );
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setRestrictionsNotice(apiErrorMessage(err));
-        }
-      }
-    }
-
     loadRestrictions();
+  }, [loadRestrictions]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useEffect(() => {
+    const cleanups = CLINICAL_RECORD_REALTIME_EVENTS.map((eventName) =>
+      subscribe(eventName, () => loadRestrictions()),
+    );
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [subscribe, loadRestrictions]);
 
   async function check(e) {
     e.preventDefault();
@@ -213,7 +166,6 @@ export default function PatientDiet() {
         ].slice(0, MAX_HISTORY_ITEMS)
       );
 
-      setLastCheckedAt(new Date());
       setFoodItem('');
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -222,23 +174,21 @@ export default function PatientDiet() {
     }
   }
 
-  function reuseQuery(query) {
-    setFoodItem(query);
-    setError('');
-    inputRef.current?.focus();
-  }
-
   function clearHistory() {
     setHistory([]);
   }
 
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [history, busy]);
+
   return (
     <PatientDashboardShell>
-      <main id="main-content">
+      <div className="patient-diet-page">
+        <GlassLensFilter />
         <PageHeader
-          eyebrow="Nutrition support"
           title="Diet Management"
-          subtitle="Check a meal or ingredient against the dietary restrictions configured for your current recovery episode."
+          subtitle="Check a meal or ingredient against your dietary restrictions."
         />
 
         <section className="mb-6" aria-labelledby="active-diet-title">
@@ -272,255 +222,69 @@ export default function PatientDiet() {
                     'No dietary restrictions are currently listed for this active recovery episode.'}
                 </p>
               )}
-
-              <p className="text-xs text-[var(--color-text-soft)]">
-                These clinician-configured restrictions should be followed
-                even when an automated food result appears permissive.
-              </p>
             </div>
           </Panel>
         </section>
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
-          <Panel
-            title="Check a food"
-            subtitle="Ask about a meal, ingredient, or preparation method."
-          >
-            <form onSubmit={check} noValidate className="space-y-4">
-              <Field
-                label="Food or meal query"
-                hint={`Example: Can I eat spicy chicken soup? · ${foodItem.length}/${MAX_QUERY_LENGTH}`}
-                error={error}
-              >
-                <textarea
-                  ref={inputRef}
-                  className="field-textarea"
-                  name="foodItem"
-                  rows={4}
-                  maxLength={MAX_QUERY_LENGTH}
-                  placeholder="e.g. Can I eat spicy chicken soup?"
-                  value={foodItem}
-                  onChange={(e) => {
-                    setFoodItem(e.target.value);
+        <Panel
+          title="Check a food"
+          action={history.length ? <Button variant="ghost" size="sm" type="button" onClick={clearHistory}>Clear history</Button> : null}
+        >
+          <div className="diet-chat-shell">
+            <div className="patient-chat-messages diet-chat-log" aria-live="polite" aria-label="Food check conversation">
+              {history.length === 0 ? (
+                <div className="patient-chat-empty-state">Ask about a meal, ingredient, or preparation method to get started.</div>
+              ) : (
+                [...history].reverse().map((item) => {
+                  const matches = item.matchedRestrictions?.length
+                    ? item.matchedRestrictions
+                    : item.restrictions || [];
 
-                    if (error) {
-                      setError('');
-                    }
-                  }}
-                  aria-invalid={Boolean(error)}
-                  aria-describedby="diet-query-help"
-                  autoComplete="off"
-                  spellCheck="true"
-                />
-              </Field>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  type="submit"
-                  loading={busy}
-                  disabled={!foodItem.trim()}
-                >
-                  {busy ? 'Checking…' : 'Check food'}
-                </Button>
-
-                <span
-                  className="text-xs text-[var(--color-text-soft)]"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {busy
-                    ? 'Your query is being checked securely.'
-                    : lastCheckedAt
-                      ? `Last checked ${lastCheckedAt.toLocaleTimeString()}`
-                      : 'No query checked yet.'}
-                </span>
-              </div>
-            </form>
-          </Panel>
-
-          <Panel
-            title="How this works"
-            subtitle="A decision-support feature, not a diagnosis."
-          >
-            <div className="space-y-3 text-sm text-[var(--color-text-soft)]">
-              <div className="diet-safety-step">
-                <Badge variant="ink">1</Badge>
-                <p>
-                  Your query is evaluated using the dietary restrictions set
-                  for your active recovery care.
-                </p>
-              </div>
-
-              <div className="diet-safety-step">
-                <Badge variant="amber">2</Badge>
-                <p>
-                  The result is classified as Safe, Caution, or Restricted
-                  with an explanation.
-                </p>
-              </div>
-
-              <div className="diet-safety-step">
-                <Badge variant="danger">3</Badge>
-                <p>
-                  When unsure or when symptoms are involved, contact your
-                  doctor through Emergency Chat.
-                </p>
-              </div>
-
-              <Alert variant="warning" title="Clinical safety">
-                Dietary checks are automated support and should not replace
-                instructions from your treating clinician, especially after
-                surgery or when symptoms are present.
-              </Alert>
-            </div>
-          </Panel>
-        </div>
-
-        <section className="mt-8" aria-labelledby="diet-history-title">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <SectionHeading
-              title="Recent checks"
-              subtitle={
-                history.length
-                  ? `${history.length} check${
-                      history.length === 1 ? '' : 's'
-                    } in this session${
-                      history.length === MAX_HISTORY_ITEMS
-                        ? ' · showing the latest checks'
-                        : ''
-                    }`
-                  : 'Your recent food checks will appear here.'
-              }
-            />
-
-            {history.length ? (
-              <Button
-                variant="ghost"
-                type="button"
-                onClick={clearHistory}
-                aria-label="Clear recent food checks"
-              >
-                Clear history
-              </Button>
-            ) : null}
-          </div>
-
-          {history.length === 0 ? (
-            <Panel>
-              <EmptyState
-                title="No food checks yet"
-                subtitle="Start with a meal or ingredient above. Results shown here are session history only."
-              />
-            </Panel>
-          ) : (
-            <div className="space-y-3">
-              {history.map((item) => {
-                const statusCopy =
-                  STATUS_COPY[item.status] || STATUS_COPY.Caution;
-
-                const matches = item.matchedRestrictions?.length
-                  ? item.matchedRestrictions
-                  : item.restrictions || [];
-
-                return (
-                  <article
-                    className={`panel p-5 diet-result-card diet-result-card--${item.status.toLowerCase()}`}
-                    key={item.id}
-                    aria-label={`${item.status} diet check`}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="break-words font-semibold text-[var(--color-ink)]">
-                            {item.foodItem}
-                          </p>
-
-                          <Badge
-                            variant={
-                              STATUS_VARIANT[item.status] || 'amber'
-                            }
-                          >
-                            {item.status}
-                          </Badge>
-                        </div>
-
-                        <p className="mt-2 text-xs uppercase tracking-[0.08em] text-[var(--color-text-soft)]">
-                          {statusCopy.title}
-                        </p>
-
-                        <p className="mt-2 text-sm leading-6 text-[var(--color-text-soft)]">
-                          {item.explanation}
-                        </p>
-                      </div>
-
-                      {item.checkedAt ? (
-                        <time
-                          className="whitespace-nowrap text-xs text-[var(--color-text-soft)]"
-                          dateTime={new Date(item.checkedAt).toISOString()}
-                        >
-                          {formatCheckedAt(item.checkedAt)}
-                        </time>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        onClick={() => reuseQuery(item.foodItem)}
-                      >
-                        Check again
-                      </Button>
-                    </div>
-
-                    <div
-                      className="diet-result-guidance mt-4"
-                      data-variant={statusCopy.variant}
-                    >
-                      <p className="font-medium text-[var(--color-ink)]">
-                        {statusCopy.detail}
-                      </p>
-
-                      {matches.length ? (
-                        <div className="mt-3">
-                          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-text-soft)]">
-                            Relevant restrictions
-                          </p>
-
-                          <ul className="mt-2 space-y-1 text-sm text-[var(--color-text-soft)]">
+                  return (
+                    <div className="diet-qa-item" key={item.id}>
+                      <p className="diet-qa-question">{item.foodItem}</p>
+                      <div className="diet-qa-answer" data-status={item.status.toLowerCase()}>
+                        <Badge variant={STATUS_VARIANT[item.status] || 'amber'}>{item.status}</Badge>
+                        <p className="mt-1.5">{item.explanation}</p>
+                        {matches.length ? (
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
                             {matches.map((match) => (
-                              <li key={match.id}>
-                                <span className="font-medium text-[var(--color-ink)]">
-                                  {match.label}
-                                </span>
-                                {match.detail ? ` — ${match.detail}` : ''}
-                              </li>
+                              <Badge key={match.id} variant="neutral">{match.label}</Badge>
                             ))}
-                          </ul>
-                        </div>
-                      ) : null}
-
-                      {item.status !== 'Safe' ? (
-                        <p className="mt-3 text-xs text-[var(--color-text-soft)]">
-                          When uncertain, especially with symptoms or
-                          post-operative concerns, use Emergency Chat to
-                          contact your doctor.
-                        </p>
-                      ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                  </article>
-                );
-              })}
+                  );
+                })
+              )}
+              {busy ? <p className="patient-chat-typing" role="status">Checking…</p> : null}
+              <div ref={scrollRef} />
             </div>
-          )}
-        </section>
 
-        <p id="diet-query-help" className="sr-only">
-          Enter one meal, ingredient, or food question. Results are guidance
-          only.
-        </p>
-      </main>
+            <form onSubmit={check} noValidate className="patient-chat-compose">
+              <label className="sr-only" htmlFor="diet-food-input">Food or meal query</label>
+              <input
+                id="diet-food-input"
+                ref={inputRef}
+                className="field-input flex-1"
+                maxLength={MAX_QUERY_LENGTH}
+                placeholder="Ask about a meal, e.g. Can I eat spicy chicken soup?"
+                value={foodItem}
+                onChange={(e) => {
+                  setFoodItem(e.target.value);
+                  if (error) setError('');
+                }}
+                aria-invalid={Boolean(error)}
+                autoComplete="off"
+                disabled={busy}
+              />
+              <Button type="submit" loading={busy} disabled={busy || !foodItem.trim()}>Send</Button>
+            </form>
+            {error ? <p className="patient-chat-send-error px-4 pb-3" role="alert">{error}</p> : null}
+          </div>
+        </Panel>
+      </div>
     </PatientDashboardShell>
   );
 }

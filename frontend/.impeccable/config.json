@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/index.css"
+        ],
+        "createdAt": "2026-09-11T08:34:38.662Z",
+        "reason": "model: reviewed all remaining side-tab findings after fixing the genuine ones (.panel/.modal-card/.dashboard-emergency-card top borders, .admin-escalation-card radius) — what's left is legitimate: .medical-disclaimer (radius already zeroed on the bordered edge), .medicine-reminder-item-next and .doctor-inbox-thread-item.is-active (active/highlighted list-row indicators, not decorative card borders), .assessment-result-copy (callout, no radius). Detector has no per-value scoping for this rule, so suppressing at file level per its own guidance."
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "src/index.css"
+        ],
+        "createdAt": "2026-09-19T05:38:56.142Z",
+        "reason": "assistant decision, not user-confirmed: single user-triggered 220ms width transition on the collapsible sidebar rail; sibling content must reflow so transform/opacity can't replace it; prefers-reduced-motion disables it"
+      }
+    ]
+  }
+}

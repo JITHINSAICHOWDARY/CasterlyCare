@@ -1,4 +1,5 @@
 // Phase 2.12.2 — Admin Doctor Management UX
+import NavIcon from '../../components/NavIcon';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { adminService } from '../../api/services/admin';
 import { apiErrorMessage } from '../../api/client';
@@ -15,8 +16,14 @@ import {
   Modal,
   PageHeader,
   Panel,
-  SectionHeading,
+  StatCard,
 } from '../../components/ui';
+
+const DOCTOR_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'inactive', label: 'Deactivated' },
+  { value: 'on_duty', label: 'On duty' },
+];
 
 function normalizeDoctors(value) {
   if (Array.isArray(value)) {
@@ -84,7 +91,6 @@ export default function AdminDoctors() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const { subscribe } = useRealtime();
@@ -92,11 +98,7 @@ export default function AdminDoctors() {
   const loadDoctors = useCallback(async ({ background = false } = {}) => {
     setError('');
 
-    if (background) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
-    }
+    if (!background) setLoading(true);
 
     try {
       const res = await adminService.getDoctors();
@@ -108,7 +110,6 @@ export default function AdminDoctors() {
       setError(apiErrorMessage(err));
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, []);
 
@@ -145,7 +146,6 @@ export default function AdminDoctors() {
 
     return list
       .filter((doctor) => {
-        if (filter === 'active') return doctor?.isActive;
         if (filter === 'inactive') return !doctor?.isActive;
 
         if (filter === 'on_duty') {
@@ -215,26 +215,16 @@ export default function AdminDoctors() {
     <DashboardShell>
       <div className="admin-doctors-page">
         <PageHeader
-          eyebrow="Clinical team"
           title="Manage Doctors"
-          subtitle="Create clinician accounts, review duty status, and control login access without removing historical records."
+          subtitle="Create clinician accounts, review duty status, and control login access."
           action={(
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={() =>
-                  loadDoctors({ background: true })
-                }
-                loading={refreshing}
-              >
-                Refresh
-              </Button>
+            <div className="admin-header-actions">
 
               <Button
                 variant="primary"
                 onClick={openAdd}
               >
-                + Add Doctor
+                Add doctor
               </Button>
             </div>
           )}
@@ -272,39 +262,40 @@ export default function AdminDoctors() {
           <LoadingState label="Loading the clinical team…" />
         ) : (
           <>
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-              <ManagementStat
-                label="All doctors"
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+              <StatCard
+                label="All doctors" icon={<NavIcon name="doctors" size={44} />}
                 value={counts.total}
                 detail="Clinician accounts"
+                accent="crimson"
               />
 
-              <ManagementStat
-                label="Active"
+              <StatCard
+                label="Active" icon={<NavIcon name="check" size={44} />}
                 value={counts.active}
                 detail="Login access enabled"
+                accent="forest"
               />
 
-              <ManagementStat
-                label="Off duty / inactive"
+              <StatCard
+                label="Off duty / inactive" icon={<NavIcon name="moon" size={44} />}
                 value={counts.inactive}
                 detail="Inactive accounts"
+                accent="gold"
               />
 
-              <ManagementStat
-                label="On duty"
+              <StatCard
+                label="On duty" icon={<NavIcon name="assessment" size={44} />}
                 value={counts.onDuty}
                 detail="Currently available"
+                accent="sand"
               />
             </div>
 
-            <Panel className="mb-6">
-              <div className="flex flex-col lg:flex-row lg:items-end gap-4">
-                <div className="flex-1">
-                  <label
-                    className="field-label"
-                    htmlFor="doctor-search"
-                  >
+            <Panel>
+              <div className="admin-toolbar">
+                <div className="admin-search">
+                  <label className="sr-only" htmlFor="doctor-search">
                     Search doctors
                   </label>
 
@@ -320,51 +311,32 @@ export default function AdminDoctors() {
                   />
                 </div>
 
-                <div className="min-w-[220px]">
-                  <label
-                    className="field-label"
-                    htmlFor="doctor-filter"
-                  >
-                    Filter
-                  </label>
-
-                  <select
-                    id="doctor-filter"
-                    className="field-input"
-                    value={filter}
-                    onChange={(event) =>
-                      setFilter(event.target.value)
-                    }
-                  >
-                    <option value="all">
-                      All doctors
-                    </option>
-
-                    <option value="active">
-                      Active only
-                    </option>
-
-                    <option value="inactive">
-                      Deactivated only
-                    </option>
-
-                    <option value="on_duty">
-                      On duty only
-                    </option>
-                  </select>
+                <div
+                  className="admin-chips"
+                  role="group"
+                  aria-label="Filter doctors"
+                >
+                  {DOCTOR_FILTERS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`admin-chip ${
+                        filter === option.value ? 'is-active' : ''
+                      }`}
+                      aria-pressed={filter === option.value}
+                      onClick={() => setFilter(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
               </div>
-            </Panel>
 
-            <Panel>
-              <SectionHeading
-                title="Clinical team"
-                subtitle={`${visibleDoctors.length} doctor${
-                  visibleDoctors.length === 1
-                    ? ''
-                    : 's'
-                } shown`}
-              />
+              <p className="admin-toolbar-meta" aria-live="polite">
+                {visibleDoctors.length} doctor{
+                  visibleDoctors.length === 1 ? '' : 's'
+                } shown
+              </p>
 
               {visibleDoctors.length === 0 ? (
                 <EmptyState
@@ -461,12 +433,12 @@ export default function AdminDoctors() {
                       {visibleDoctors.map((doctor) => (
                         <tr
                           key={doctor.id}
-                          className="border-b border-[var(--color-line)] last:border-0 align-top"
+                          className="border-b border-[var(--color-line)] last:border-0 align-middle"
                         >
                           <td className="py-4 pr-4">
                             <button
                               type="button"
-                              className="text-left group"
+                              className="admin-doctor-cell text-left group"
                               onClick={() =>
                                 setSelectedDoctor(doctor)
                               }
@@ -474,14 +446,20 @@ export default function AdminDoctors() {
                                 doctor?.name || 'doctor'
                               } details`}
                             >
-                              <span className="block font-semibold text-[var(--color-ink)] group-hover:text-[var(--color-crimson)]">
-                                {doctor?.name ||
-                                  'Unnamed doctor'}
+                              <span className="admin-avatar" aria-hidden="true">
+                                {(doctor?.name || 'D').trim()[0]}
                               </span>
 
-                              <span className="block mt-1 text-[var(--color-text-soft)]">
-                                {doctor?.email ||
-                                  'Email not recorded'}
+                              <span className="min-w-0">
+                                <span className="block font-semibold text-[var(--color-ink)] group-hover:text-[var(--color-crimson)]">
+                                  {doctor?.name ||
+                                    'Unnamed doctor'}
+                                </span>
+
+                                <span className="block mt-0.5 text-[var(--color-text-soft)]">
+                                  {doctor?.email ||
+                                    'Email not recorded'}
+                                </span>
                               </span>
                             </button>
                           </td>
@@ -571,28 +549,6 @@ export default function AdminDoctors() {
         />
       </div>
     </DashboardShell>
-  );
-}
-
-function ManagementStat({
-  label,
-  value,
-  detail,
-}) {
-  return (
-    <div className="admin-management-stat panel">
-      <p className="text-xs uppercase tracking-[0.12em] text-[var(--color-text-soft)]">
-        {label}
-      </p>
-
-      <p className="font-display text-3xl text-[var(--color-crimson)] mt-2">
-        {value}
-      </p>
-
-      <p className="text-xs text-[var(--color-muted)] mt-1">
-        {detail}
-      </p>
-    </div>
   );
 }
 

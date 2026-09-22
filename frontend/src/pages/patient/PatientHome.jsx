@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import PatientDashboardShell from '../../components/PatientDashboardShell';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { PatientDashboardShell } from '../../components/RoleDashboardShell';
 import {
   Alert,
   Badge,
@@ -10,9 +11,10 @@ import {
   Panel,
   PageHeader,
   RecoveryDonut,
-  SectionHeading,
   StatCard,
 } from '../../components/ui';
+import NavIcon from '../../components/NavIcon';
+import GlassLensFilter from '../../components/GlassLensFilter';
 import { patientService } from '../../api/services/patient';
 import { useAuth } from '../../context/AuthContext';
 import { useRealtime } from '../../context/RealtimeContext';
@@ -79,6 +81,18 @@ function formatDate(value) {
   }).format(date);
 }
 
+function addDays(dateStr, days) {
+  const date = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setDate(date.getDate() + days);
+  // Local date components, not toISOString (which converts to UTC and can
+  // shift the date by a day depending on the browser's timezone offset).
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function normalizeRecovery(data, user) {
   const episode = data?.careEpisode || data?.activeCareEpisode || data?.recovery || {};
   const totalDays = Number(
@@ -109,54 +123,55 @@ function normalizeRecovery(data, user) {
   };
 }
 
-// ---- Patient dashboard loading, empty, error & recovery states: Phase 2.4.7 ----
-// ---- Patient dashboard visual/content consistency: Phase 2.4.9 ----
 export default function PatientHome() {
   const { user } = useAuth();
   const { subscribe } = useRealtime();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [confirmSos, setConfirmSos] = useState(false);
   const [sosMessage, setSosMessage] = useState('');
   const [sosVariant, setSosVariant] = useState('success');
   const [sosSending, setSosSending] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [newEpisode, setNewEpisode] = useState({ doctorUniqueId: '', surgeryName: '', recoveryTotalDays: '14' });
-  const [episodeSubmitting, setEpisodeSubmitting] = useState(false);
-  const [episodeError, setEpisodeError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
 
-  async function load({ preserveData = false } = {}) {
-    setLoadError('');
-    if (preserveData && data) setIsRefreshing(true);
+  const loadedOnce = useRef(false);
+
+  const load = useCallback(async ({ background = false } = {}) => {
+    if (!background) setRefreshing(true);
     try {
       const res = await patientService.getHome();
       setData(res.data);
-    } catch (err) {
-      setLoadError(err?.message || 'We could not load your dashboard right now.');
+      loadedOnce.current = true;
+      setLoadError('');
+    } catch (error) {
+      if (!loadedOnce.current) setLoadError(error?.message || 'We could not load your dashboard right now.');
     } finally {
-      setIsRefreshing(false);
+      if (!background) setRefreshing(false);
     }
-  }
-
-  useEffect(() => {
-    load();
   }, []);
 
   useEffect(() => {
+    load();
+    const timer = setInterval(() => load({ background: true }), 15000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  useEffect(() => {
     const cleanups = APPOINTMENT_REALTIME_EVENTS.map((eventName) =>
-      subscribe(eventName, () => load({ preserveData: true })),
+      subscribe(eventName, () => load({ background: true })),
     );
     return () => cleanups.forEach((cleanup) => cleanup());
-  }, [subscribe]);
+  }, [subscribe, load]);
 
   useEffect(() => {
     const cleanups = RECOVERY_REALTIME_EVENTS.map((eventName) =>
       subscribe(eventName, (payload) => {
-        if (!payload?.patientId || payload.patientId === user?.id) load({ preserveData: true });
+        if (!payload?.patientId || payload.patientId === user?.id) load({ background: true });
       }),
     );
     return () => cleanups.forEach((cleanup) => cleanup());
-  }, [subscribe, user?.id]);
+  }, [subscribe, user?.id, load]);
 
   async function sendSos() {
     setSosSending(true);
@@ -171,25 +186,6 @@ export default function PatientHome() {
       setSosSending(false);
       setConfirmSos(false);
       window.setTimeout(() => setSosMessage(''), 6000);
-    }
-  }
-
-  async function startCareEpisode(event) {
-    event.preventDefault();
-    setEpisodeError('');
-    setEpisodeSubmitting(true);
-    try {
-      await patientService.startCareEpisode({
-        doctorUniqueId: newEpisode.doctorUniqueId,
-        surgeryName: newEpisode.surgeryName,
-        recoveryTotalDays: Number(newEpisode.recoveryTotalDays) || 14,
-      });
-      setNewEpisode({ doctorUniqueId: '', surgeryName: '', recoveryTotalDays: '14' });
-      await load({ preserveData: true });
-    } catch (err) {
-      setEpisodeError(err?.response?.data?.error || err?.message || 'Could not start a new recovery episode. Please double-check the doctor ID.');
-    } finally {
-      setEpisodeSubmitting(false);
     }
   }
 
@@ -208,65 +204,36 @@ export default function PatientHome() {
     return Number.isNaN(date.getTime()) ? null : date;
   }, [upcoming?.date]);
   const recovery = useMemo(() => normalizeRecovery(data, user), [data, user]);
+  const recoveryEndDate = useMemo(
+    () => (recovery.startDate && recovery.totalDays ? addDays(recovery.startDate, recovery.totalDays) : ''),
+    [recovery.startDate, recovery.totalDays],
+  );
   const recoveryPct = recovery.totalDays > 0 ? Math.round((recovery.daysCompleted / recovery.totalDays) * 100) : 0;
   const recoveryStatus = recovery.status === 'completed' || recovery.daysRemaining === 0 ? 'Recovery completed' : 'Active recovery';
-
-  if (!data && !loadError) {
-    return (
-      <PatientDashboardShell>
-        <PageHeader
-          eyebrow="Your care journey"
-          title={`Welcome, ${displayName}`}
-          subtitle="Preparing your recovery dashboard and today's care information."
-        />
-        <Panel className="patient-dashboard-state-panel">
-          <LoadingState label="Loading your recovery dashboard…" />
-        </Panel>
-      </PatientDashboardShell>
-    );
-  }
-
-  if (!data && loadError) {
-    return (
-      <PatientDashboardShell>
-        <PageHeader
-          eyebrow="Your care journey"
-          title={`Welcome, ${displayName}`}
-          subtitle="We could not retrieve your latest dashboard information."
-        />
-        <Panel className="patient-dashboard-state-panel">
-          <EmptyState
-            title="Your dashboard is temporarily unavailable"
-            subtitle="Your account is still available. Please retry the dashboard connection; no clinical conclusion is being drawn from this loading error."
-            action={<Button variant="primary" onClick={() => load()} loading={isRefreshing}>Retry dashboard</Button>}
-          />
-        </Panel>
-      </PatientDashboardShell>
-    );
-  }
+  const today = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
 
   return (
     <PatientDashboardShell>
-      <PageHeader
-        eyebrow="Your care journey"
-        title={`Welcome, ${displayName}`}
-        subtitle="A clear view of today's recovery plan, appointments, medicines, and urgent support."
-      />
+      <div className="patient-home-page">
+      <GlassLensFilter />
+      <PageHeader title={`Welcome, ${displayName}`} subtitle={today} />
 
+      {loadError && !data ? (
+        <Panel title="Dashboard unavailable" className="mb-6">
+          <Alert variant="danger" title="Unable to load your dashboard">{loadError}</Alert>
+          <div className="mt-4">
+            <Button variant="primary" onClick={() => load()} loading={refreshing}>
+              {refreshing ? 'Retrying…' : 'Retry'}
+            </Button>
+          </div>
+        </Panel>
+      ) : !data ? (
+        <LoadingState label="Loading your recovery dashboard…" rows={4} />
+      ) : (
+      <>
       {loadError ? (
         <div className="mb-6" role="status" aria-live="polite">
-          <Alert variant="warning" title="Showing your last available dashboard data">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span>{loadError} Your previously loaded information remains visible while you reconnect.</span>
-              <Button variant="outline" size="sm" onClick={() => load({ preserveData: true })} loading={isRefreshing}>Refresh</Button>
-            </div>
-          </Alert>
-        </div>
-      ) : null}
-
-      {isRefreshing ? (
-        <div className="patient-dashboard-refreshing" role="status" aria-live="polite">
-          <LoadingState label="Refreshing your dashboard…" />
+          <Alert variant="warning" title="Dashboard update">{loadError}</Alert>
         </div>
       ) : null}
 
@@ -285,90 +252,43 @@ export default function PatientHome() {
         </div>
       ) : null}
 
-      {data && !data.hasActiveCareEpisode ? (
-        <Panel
-          className="mb-6"
-          title="Start a new recovery episode"
-          subtitle="You have no active care episode right now. If your surgeon has given you a new Doctor ID for a new surgery, enter it below to begin a new recovery episode."
-        >
-          <form onSubmit={startCareEpisode} className="grid gap-3 sm:grid-cols-2 sm:items-end">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="field-label">Doctor ID</span>
-              <input
-                className="field-input"
-                value={newEpisode.doctorUniqueId}
-                onChange={(event) => setNewEpisode((prev) => ({ ...prev, doctorUniqueId: event.target.value }))}
-                placeholder="e.g. DOC-3L4SUA"
-                required
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="field-label">Surgery name</span>
-              <input
-                className="field-input"
-                value={newEpisode.surgeryName}
-                onChange={(event) => setNewEpisode((prev) => ({ ...prev, surgeryName: event.target.value }))}
-                placeholder="e.g. Cardiac Bypass"
-                required
-              />
-            </label>
-            <p className="sm:col-span-2 text-xs text-[var(--color-text-soft)]">
-              Your surgeon will set and can adjust your exact recovery duration in your patient record.
-            </p>
-            <div className="sm:col-span-2">
-              <Button type="submit" variant="primary" loading={episodeSubmitting}>Start recovery episode</Button>
-            </div>
-          </form>
-          {episodeError ? (
-            <div className="mt-3" role="alert" aria-live="assertive">
-              <Alert variant="danger" title="Could not start episode">{episodeError}</Alert>
-            </div>
-          ) : null}
+      {!data.hasActiveCareEpisode ? (
+        <Panel title="No active recovery episode">
+          <EmptyState
+            title="You don't have an active recovery episode"
+            subtitle="Ask your surgeon for a Doctor ID and start a new recovery episode from the sidebar."
+            action={<Button variant="primary" onClick={() => navigate('/patient/new-episode')}>Start a new recovery episode</Button>}
+          />
         </Panel>
-      ) : null}
-
-      {data && data.hasActiveCareEpisode ? (
+      ) : (
       <>
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr] mb-6">
-        <section className="dashboard-emergency-card" aria-labelledby="emergency-title">
-          <div className="dashboard-emergency-mark" aria-hidden="true">SOS</div>
-          <div className="min-w-0 flex-1">
-            <p className="eyebrow dashboard-emergency-eyebrow">Urgent assistance</p>
-            <h2 id="emergency-title" className="dashboard-emergency-title">Medical emergency?</h2>
-            <p className="dashboard-emergency-copy">
-              Confirming SOS sends an urgent alert to your assigned doctor. If your doctor is off-duty, the escalation route is used.
+      <Panel className="mb-6" title="Emergency SOS">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3 min-w-0">
+            <span className="stat-card-icon" aria-hidden="true" style={{ color: 'var(--color-danger)' }}>
+              <NavIcon name="alert" size={32} />
+            </span>
+            <p className="text-sm text-[var(--color-text-soft)] max-w-md">
+              Confirming sends an urgent alert to your assigned doctor, or to the hospital administrator if your doctor is off-duty.
             </p>
           </div>
-          <Button variant="danger" size="lg" onClick={() => setConfirmSos(true)} className="dashboard-sos-button">
-            <span aria-hidden="true">🚨</span>
-            Send SOS
-          </Button>
-        </section>
-
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard
-            label="Next appointment"
-            value={hasUpcoming ? upcoming.time : '—'}
-            detail={hasUpcoming ? upcomingDate : 'Nothing scheduled'}
-            accent="gold"
-            icon="▤"
-          />
-          <StatCard
-            label="Medicine schedule"
-            value={medicineCount}
-            detail={medicineCount === 1 ? 'scheduled medicine' : 'scheduled medicines'}
-            accent="forest"
-            icon="⚕"
-          />
+          <Button variant="danger" size="lg" onClick={() => setConfirmSos(true)}>Send SOS</Button>
         </div>
+      </Panel>
+
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+        <StatCard label="Days remaining" icon={<NavIcon name="assessment" size={44} />} value={recovery.daysRemaining} accent="crimson" />
+        <StatCard
+          label="Next appointment"
+          icon={<NavIcon name="calendar" size={44} />}
+          value={hasUpcoming ? upcomingDateObject?.getDate() ?? '—' : '—'}
+          detail={hasUpcoming ? upcomingDateObject?.toLocaleDateString(undefined, { month: 'short' }) : 'Nothing scheduled'}
+          accent="crimson"
+        />
+        <StatCard className="col-span-2 lg:col-span-1" label="Medicines today" icon={<NavIcon name="medicines" size={44} />} value={medicineCount} accent="crimson" />
       </div>
 
-      <Panel
-        className="mb-6"
-        title="Recovery & care summary"
-        subtitle="Current care episode and recorded recovery progress"
-        action={<Badge variant={recoveryStatus === 'Recovery completed' ? 'success' : 'gold'}>{recoveryStatus}</Badge>}
-      >
+      <Panel className="mb-6" title="Recovery & care summary" action={<Badge variant={recoveryStatus === 'Recovery completed' ? 'success' : 'gold'}>{recoveryStatus}</Badge>}>
         {recovery.totalDays === 0 ? (
           <EmptyState
             title="Recovery plan details are not available yet"
@@ -385,10 +305,6 @@ export default function PatientHome() {
                 <div>
                   <p className="eyebrow">Current procedure</p>
                   <h3 className="recovery-summary-title">{recovery.surgeryName}</h3>
-                </div>
-                <div className="recovery-summary-days">
-                  <strong>{recovery.daysRemaining}</strong>
-                  <span>days remaining</span>
                 </div>
               </div>
               <div className="recovery-summary-meta">
@@ -408,25 +324,25 @@ export default function PatientHome() {
                     <strong>{formatDate(recovery.startDate)}</strong>
                   </div>
                 ) : null}
+                {recoveryEndDate ? (
+                  <div>
+                    <span>Recovery ends</span>
+                    <strong>{formatDate(recoveryEndDate)}</strong>
+                  </div>
+                ) : null}
                 <div>
                   <span>Configured recovery period</span>
                   <strong>{recovery.totalDays} days</strong>
                 </div>
               </div>
-              <p className="recovery-summary-note">
-                Recovery duration reflects the configured care plan. Clinical progress and discharge decisions remain with your medical team.
-              </p>
             </div>
           </div>
         )}
       </Panel>
-      </>
-      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel
           title="Upcoming appointment"
-          subtitle="Your next scheduled care visit"
           action={hasUpcoming ? <Badge variant="success">Upcoming</Badge> : null}
         >
           {!hasUpcoming ? (
@@ -463,7 +379,6 @@ export default function PatientHome() {
 
         <Panel
           title="Today's medicine schedule"
-          subtitle="Your prescribed doses and reminder times for today"
           action={medicineCount ? <Badge variant="gold">{medicineCount} scheduled</Badge> : null}
         >
           {medicineCount === 0 ? (
@@ -474,17 +389,21 @@ export default function PatientHome() {
                 const isNextMedicine = nextDose?.medicineIndex === index;
                 return (
                   <article key={`${medicine.name}-${index}`} className={`medicine-reminder-item ${isNextMedicine ? 'medicine-reminder-item-next' : ''}`} aria-label={`${medicine.name} medicine schedule`}>
-                    <div className="medicine-reminder-icon" aria-hidden="true">◷</div>
+                    <span className="med-icon" aria-hidden="true"><NavIcon name="medicines" size={20} /></span>
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold text-sm text-[var(--color-ink)] truncate">{medicine.name}</p>
                       <p className="text-xs text-[var(--color-text-soft)] mt-0.5">{medicine.dosage || 'Dosage not specified'}</p>
                     </div>
                     <div className="medicine-reminder-times" aria-label={`Scheduled times for ${medicine.name}`}>
-                      {(medicine.times || []).map((time, timeIndex) => (
-                        <Badge key={`${time}-${timeIndex}`} variant={isNextMedicine && nextDose?.timeIndex === timeIndex ? 'crimson' : 'gold'}>
-                          {formatTime(time)}{isNextMedicine && nextDose?.timeIndex === timeIndex ? ' · Next' : ''}
-                        </Badge>
-                      ))}
+                      {(medicine.times || []).map((time, timeIndex) => {
+                        const isNextTime = isNextMedicine && nextDose?.timeIndex === timeIndex;
+                        return (
+                          <span key={`${time}-${timeIndex}`} className={`time-chip ${isNextTime ? 'is-next' : ''}`}>
+                            <NavIcon name="clock" size={14} />
+                            {formatTime(time)}{isNextTime ? ' · Next' : ''}
+                          </span>
+                        );
+                      })}
                     </div>
                   </article>
                 );
@@ -493,21 +412,11 @@ export default function PatientHome() {
           )}
         </Panel>
       </div>
-
-      <Panel className="mt-6" title="Need help choosing what to do next?" subtitle="Your support tools are always available from the floating chat control.">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <SectionHeading
-              title="Kingslayer"
-              subtitle="Use Kingslayer for general guidance and app navigation."
-            />
-            <p className="text-xs text-[var(--color-text-soft)] mt-1 max-w-2xl">
-              For urgent concerns that need your doctor's attention, use Emergency Chat rather than asking the AI assistant to escalate a case.
-            </p>
-          </div>
-          <div className="support-tool-hint" aria-hidden="true">🗡️</div>
-        </div>
-      </Panel>
+      </>
+      )}
+      </>
+      )}
+      </div>
 
       <ConfirmModal
         open={confirmSos}

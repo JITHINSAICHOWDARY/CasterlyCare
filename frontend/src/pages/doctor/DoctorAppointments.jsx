@@ -1,55 +1,69 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useRealtime } from '../../context/RealtimeContext';
 import { APPOINTMENT_REALTIME_EVENTS } from '../../config/realtimeEvents';
 import { doctorService } from '../../api/services/doctor';
 import { DoctorDashboardShell as DashboardShell } from '../../components/RoleDashboardShell';
-import { Alert, Badge, Button, EmptyState, Modal, Panel } from '../../components/ui';
+import { Alert, Button, ConfirmModal, EmptyState, LoadingState, Modal, Panel, PageHeader } from '../../components/ui';
+import { apiErrorMessage } from '../../api/client';
+import SlotPicker from '../../components/SlotPicker';
+import DatePicker from '../../components/DatePicker';
+import GlassLensFilter from '../../components/GlassLensFilter';
+import { slotLabel } from '../../utils/time';
 
-const STATUS_VARIANT = { upcoming: 'gold', completed: 'forest', cancelled: 'danger' };
-const STATUS_LABEL = { upcoming: 'Upcoming', completed: 'Completed', cancelled: 'Cancelled' };
-const FILTERS = ['all', 'upcoming', 'completed', 'cancelled'];
+const TABS = [['upcoming', 'Upcoming'], ['completed', 'Completed'], ['cancelled', 'Cancelled']];
+const EMPTY = {
+  upcoming: ['No upcoming appointments', 'Follow-ups and patient bookings will appear here.'],
+  completed: ['No completed appointments yet', 'Appointments you mark completed are kept here.'],
+  cancelled: ['No cancelled appointments', 'Cancelled appointments are kept here.'],
+};
 
 function titleCase(value = '') {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function parseDateTime(date, time) {
-  const value = `${date || ''}T${time || '00:00'}`;
-  const parsed = new Date(value);
+  const parsed = new Date(`${date || ''}T${time || '00:00'}`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function formatDate(date) {
-  const parsed = new Date(`${date}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return date || 'Not recorded';
-  return parsed.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+function slotHasPassed(appointment) {
+  const at = parseDateTime(appointment.date, appointment.time);
+  return !at || at <= new Date();
 }
 
-function formatTime(time) {
-  const [hours, minutes] = String(time || '').split(':').map(Number);
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return time || 'Not recorded';
-  const date = new Date();
-  date.setHours(hours, minutes, 0, 0);
-  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+function localISO(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// "Today", "Tomorrow", "Yesterday", else "Wednesday 23 September".
+function dayHeading(date) {
+  const parsed = new Date(`${date}T00:00:00`);
+  const long = Number.isNaN(parsed.getTime())
+    ? date
+    : parsed.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', ...(parsed.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+  if (date === localISO(0)) return { label: 'Today', long };
+  if (date === localISO(1)) return { label: 'Tomorrow', long };
+  if (date === localISO(-1)) return { label: 'Yesterday', long };
+  return { label: long, long: '' };
 }
 
 export default function DoctorAppointments() {
   const { subscribe } = useRealtime();
-  const navigate = useNavigate();
   const [appointments, setAppointments] = useState(null);
-  const [filter, setFilter] = useState('all');
+  const [tab, setTab] = useState('upcoming');
   const [query, setQuery] = useState('');
   const [rescheduling, setRescheduling] = useState(null);
   const [completeTarget, setCompleteTarget] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
   const [actionError, setActionError] = useState('');
   const [loadError, setLoadError] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const [completingId, setCompletingId] = useState('');
+  const [busyId, setBusyId] = useState('');
 
-  async function load({ preserve = false } = {}) {
-    if (preserve) setRefreshing(true);
-    else setLoadError('');
+  const load = useCallback(async ({ preserve = false } = {}) => {
+    if (!preserve) setLoadError('');
     try {
       const res = await doctorService.getAppointments();
       setAppointments(Array.isArray(res.data?.appointments) ? res.data.appointments : []);
@@ -57,184 +71,150 @@ export default function DoctorAppointments() {
     } catch {
       if (!preserve) setLoadError('Unable to load appointments.');
       else setActionError('Appointments could not be refreshed. The last loaded schedule is still shown.');
-    } finally {
-      setRefreshing(false);
     }
-  }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     const cleanups = APPOINTMENT_REALTIME_EVENTS.map((eventName) =>
       subscribe(eventName, () => load({ preserve: true })),
     );
     return () => cleanups.forEach((cleanup) => cleanup());
-  }, [subscribe]);
+  }, [subscribe, load]);
 
-  const visible = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return (appointments || [])
-      .filter((appointment) => filter === 'all' || appointment.status === filter)
-      .filter((appointment) => {
-        if (!normalized) return true;
-        const haystack = [
-          appointment.patientName,
-          appointment.surgeryName,
-          appointment.visitCategory,
-          appointment.serviceType,
-          appointment.date,
-          appointment.time,
-        ].filter(Boolean).join(' ').toLowerCase();
-        return haystack.includes(normalized);
-      })
+  const counts = useMemo(() => Object.fromEntries(TABS.map(([key]) => [key, (appointments || []).filter((a) => a.status === key).length])), [appointments]);
+
+  // Appointments in the chosen tab, matching the search, grouped by day.
+  const groups = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const list = (appointments || [])
+      .filter((a) => a.status === tab)
+      .filter((a) => !needle || [a.patientName, a.surgeryName, titleCase(a.visitCategory), titleCase(a.serviceType), a.date, slotLabel(a.time)].filter(Boolean).join(' ').toLowerCase().includes(needle))
       .sort((a, b) => {
-        const aDate = parseDateTime(a.date, a.time)?.getTime() ?? 0;
-        const bDate = parseDateTime(b.date, b.time)?.getTime() ?? 0;
-        if (filter === 'completed' || filter === 'cancelled') return bDate - aDate;
-        return aDate - bDate;
+        const diff = (parseDateTime(a.date, a.time)?.getTime() ?? 0) - (parseDateTime(b.date, b.time)?.getTime() ?? 0);
+        return tab === 'upcoming' ? diff : -diff;
       });
-  }, [appointments, filter, query]);
+    const byDay = new Map();
+    list.forEach((a) => byDay.set(a.date, [...(byDay.get(a.date) || []), a]));
+    return [...byDay.entries()];
+  }, [appointments, tab, query]);
 
-  const counts = useMemo(() => FILTERS.reduce((acc, item) => {
-    acc[item] = item === 'all' ? (appointments || []).length : (appointments || []).filter((a) => a.status === item).length;
-    return acc;
-  }, {}), [appointments]);
-
-  async function complete(id) {
-    setCompletingId(id);
+  async function run(id, action, done) {
+    setBusyId(id);
     setActionError('');
     try {
-      await doctorService.completeAppointment(id);
-      setCompleteTarget(null);
+      await action(id);
+      done();
       await load({ preserve: true });
-    } catch {
-      setActionError('This appointment could not be marked completed. Please retry.');
+    } catch (err) {
+      done();
+      setActionError(apiErrorMessage(err));
     } finally {
-      setCompletingId('');
+      setBusyId('');
     }
   }
 
   return (
     <DashboardShell>
-      <div className="flex flex-col gap-1 mb-6">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="font-display text-3xl text-[var(--color-ink)] mb-1">Appointments</h1>
-            <p className="text-[var(--color-text-soft)]">Manage your complete schedule — previous, present, and future.</p>
+      <div className="doctor-appointments-page">
+        <GlassLensFilter />
+        <PageHeader title="Appointments" subtitle={appointments ? `${counts.upcoming} upcoming` : 'Your schedule'} />
+
+        {actionError && <div className="mb-4" role="status" aria-live="polite"><Alert variant="warning" title="Schedule update">{actionError}</Alert></div>}
+
+        <div className="admin-toolbar mb-5">
+          <div className="admin-chips" role="tablist" aria-label="Appointment status">
+            {TABS.map(([key, label]) => (
+              <button key={key} type="button" role="tab" aria-selected={tab === key} className={`admin-chip ${tab === key ? 'is-active' : ''}`} onClick={() => setTab(key)}>
+                {label} ({counts[key] ?? 0})
+              </button>
+            ))}
           </div>
-          <Button variant="outline" onClick={() => load({ preserve: true })} disabled={refreshing}>
-            {refreshing ? 'Refreshing…' : 'Refresh schedule'}
-          </Button>
+          <div className="admin-search">
+            <label className="sr-only" htmlFor="doctor-appointments-search">Search appointments</label>
+            <input id="doctor-appointments-search" className="field-input" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search patient, surgery, service or date" autoComplete="off" />
+          </div>
         </div>
-      </div>
 
-      {actionError && <div className="mb-4" role="status" aria-live="polite"><Alert variant="warning" title="Schedule update">{actionError}</Alert></div>}
-
-      <Panel className="mb-4">
-        <div className="flex gap-2 flex-wrap" role="tablist" aria-label="Appointment status filters">
-          {FILTERS.map((item) => (
-            <button
-              key={item}
-              role="tab"
-              type="button"
-              aria-selected={filter === item}
-              tabIndex={filter === item ? 0 : -1}
-              className={`btn ${filter === item ? 'btn-primary' : 'btn-outline'}`}
-              onClick={() => setFilter(item)}
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowRight') { event.preventDefault(); setFilter(FILTERS[(FILTERS.indexOf(item) + 1) % FILTERS.length]); }
-                if (event.key === 'ArrowLeft') { event.preventDefault(); setFilter(FILTERS[(FILTERS.indexOf(item) - 1 + FILTERS.length) % FILTERS.length]); }
-                if (event.key === 'Home') { event.preventDefault(); setFilter(FILTERS[0]); }
-                if (event.key === 'End') { event.preventDefault(); setFilter(FILTERS[FILTERS.length - 1]); }
-              }}
-            >
-              {titleCase(item)} <span aria-hidden="true">({counts[item] ?? 0})</span>
-            </button>
-          ))}
-        </div>
-        <div className="mt-4">
-          <label htmlFor="doctor-appointments-search" className="field-label">Search appointments</label>
-          <input
-            id="doctor-appointments-search"
-            className="field-input"
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search patient, surgery, service, or date"
-            autoComplete="off"
-          />
-        </div>
-      </Panel>
-
-      {loadError && !appointments ? (
-        <Panel>
-          <Alert variant="danger" title="Appointments unavailable">
-            {loadError}
+        {loadError && !appointments ? (
+          <Panel>
+            <Alert variant="danger" title="Appointments unavailable">{loadError}</Alert>
             <div className="mt-3"><Button onClick={() => load()}>Retry</Button></div>
-          </Alert>
-        </Panel>
-      ) : !appointments ? (
-        <Panel><p className="text-sm text-[var(--color-text-soft)]" aria-live="polite">Loading appointments…</p></Panel>
-      ) : (
-        <Panel>
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-            <p className="text-sm text-[var(--color-text-soft)]" aria-live="polite">
-              Showing {visible.length} of {counts[filter] ?? 0} {filter === 'all' ? 'appointments' : STATUS_LABEL[filter].toLowerCase() + ' appointments'}.
-            </p>
-            {query && <Button variant="ghost" onClick={() => setQuery('')}>Clear search</Button>}
-          </div>
-
-          {visible.length === 0 ? (
-            <EmptyState title={query ? 'No matching appointments' : 'No appointments in this view'} description={query ? 'Try a different patient, service, or date.' : 'Appointments will appear here when they are scheduled.'} />
-          ) : (
-            <div className="space-y-3" role="tabpanel" aria-label={`${titleCase(filter)} appointments`}>
-              {visible.map((appointment) => (
-                <article key={appointment.id} className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 rounded-md border border-[var(--color-line)]">
-                  <div className="flex items-start gap-4 min-w-0">
-                    <div className="text-center w-24 shrink-0">
-                      <p className="text-xs text-[var(--color-text-soft)]">{formatDate(appointment.date)}</p>
-                      <p className="font-semibold text-sm">{formatTime(appointment.time)}</p>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-[var(--color-ink)] break-words">{appointment.patientName || 'Patient name not recorded'}</p>
-                      <p className="text-sm text-[var(--color-text-soft)] break-words">
-                        {appointment.surgeryName || 'Surgery not recorded'} · {titleCase(appointment.visitCategory)} · {titleCase(appointment.serviceType)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap justify-end">
-                    <Badge variant={STATUS_VARIANT[appointment.status]}>{STATUS_LABEL[appointment.status] || titleCase(appointment.status)}</Badge>
-                    <Button variant="outline" onClick={() => navigate(`/doctor/patients/${appointment.patientId}`)}>Patient details</Button>
-                    {appointment.status === 'upcoming' && (
-                      <>
-                        <Button variant="outline" onClick={() => setRescheduling(appointment)}>Reschedule</Button>
-                        <Button variant="gold" onClick={() => setCompleteTarget(appointment)}>Mark completed</Button>
-                      </>
-                    )}
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </Panel>
-      )}
-
-      <RescheduleModal appt={rescheduling} onClose={() => setRescheduling(null)} onDone={async () => { setRescheduling(null); await load({ preserve: true }); }} />
-      <Modal open={!!completeTarget} title="Mark appointment completed?" onClose={() => completingId ? undefined : setCompleteTarget(null)}>
-        {completeTarget && (
-          <div className="space-y-4">
-            <p className="text-sm text-[var(--color-text-soft)]">
-              Mark {completeTarget.patientName || 'this patient'}’s {titleCase(completeTarget.serviceType)} appointment on {formatDate(completeTarget.date)} at {formatTime(completeTarget.time)} as completed?
-            </p>
-            <div className="flex justify-end gap-2 flex-wrap">
-              <Button variant="outline" onClick={() => setCompleteTarget(null)} disabled={!!completingId}>Keep upcoming</Button>
-              <Button variant="gold" onClick={() => complete(completeTarget.id)} disabled={!!completingId}>
-                {completingId ? 'Completing…' : 'Mark completed'}
-              </Button>
-            </div>
+          </Panel>
+        ) : !appointments ? (
+          <LoadingState label="Loading appointments…" rows={4} />
+        ) : groups.length === 0 ? (
+          <Panel>
+            <EmptyState
+              title={query ? 'No matching appointments' : EMPTY[tab][0]}
+              subtitle={query ? 'Try a different patient, service or date.' : EMPTY[tab][1]}
+              action={query ? <Button variant="outline" onClick={() => setQuery('')}>Clear search</Button> : null}
+            />
+          </Panel>
+        ) : (
+          <div className="appt-days" role="tabpanel">
+            {groups.map(([date, items]) => {
+              const heading = dayHeading(date);
+              return (
+                <section key={date} className="appt-day" aria-label={heading.long || heading.label}>
+                  <h2 className="appt-day-title">{heading.label}{heading.long ? <span>{heading.long}</span> : null}</h2>
+                  <Panel className="appt-day-card">
+                    <ul className="appt-rows">
+                      {items.map((a) => {
+                        const passed = slotHasPassed(a);
+                        return (
+                          <li key={a.id} className="appt-row">
+                            <div className="appt-time">{slotLabel(a.time)}</div>
+                            <div className="appt-info">
+                              <Link to={`/doctor/patients/${a.patientId}`} className="appt-patient">{a.patientName || 'Patient name not recorded'}</Link>
+                              <p className="appt-meta">{[a.surgeryName || 'Surgery not recorded', titleCase(a.visitCategory), titleCase(a.serviceType)].filter(Boolean).join(' · ')}</p>
+                            </div>
+                            {a.status === 'upcoming' ? (
+                              <div className="appt-actions">
+                                <Button variant="primary" size="sm" onClick={() => setCompleteTarget(a)} disabled={!passed || busyId === a.id}>Mark completed</Button>
+                                <Button variant="outline" size="sm" onClick={() => setRescheduling(a)} disabled={busyId === a.id}>Reschedule</Button>
+                                <Button variant="ghost" size="sm" className="appt-cancel" onClick={() => setCancelTarget(a)} disabled={busyId === a.id}>Cancel</Button>
+                                {!passed ? <span className="appt-hint">Available after {slotLabel(a.time)}</span> : null}
+                              </div>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </Panel>
+                </section>
+              );
+            })}
           </div>
         )}
-      </Modal>
+      </div>
+
+      <RescheduleModal appt={rescheduling} onClose={() => setRescheduling(null)} onDone={async () => { setRescheduling(null); await load({ preserve: true }); }} />
+
+      <ConfirmModal
+        open={!!completeTarget}
+        tone="info"
+        variant="primary"
+        eyebrow="Mark completed"
+        title="Mark this appointment completed?"
+        body={completeTarget ? `${completeTarget.patientName || 'This patient'}'s ${titleCase(completeTarget.serviceType)} at ${slotLabel(completeTarget.time)} will be marked completed.` : ''}
+        confirmLabel={busyId === completeTarget?.id ? 'Completing…' : 'Mark completed'}
+        confirmDisabled={busyId === completeTarget?.id}
+        onConfirm={() => run(completeTarget.id, doctorService.completeAppointment, () => setCompleteTarget(null))}
+        onCancel={() => { if (!busyId) setCompleteTarget(null); }}
+      />
+
+      <ConfirmModal
+        open={!!cancelTarget}
+        eyebrow="Cancel appointment"
+        title="Cancel this appointment?"
+        body={cancelTarget ? `${cancelTarget.patientName || 'The patient'} will be told their ${titleCase(cancelTarget.serviceType)} at ${slotLabel(cancelTarget.time)} was cancelled, and the time becomes free again.` : ''}
+        confirmLabel={busyId === cancelTarget?.id ? 'Cancelling…' : 'Cancel appointment'}
+        confirmDisabled={busyId === cancelTarget?.id}
+        onConfirm={() => run(cancelTarget.id, doctorService.cancelAppointment, () => setCancelTarget(null))}
+        onCancel={() => { if (!busyId) setCancelTarget(null); }}
+      />
     </DashboardShell>
   );
 }
@@ -248,31 +228,24 @@ function RescheduleModal({ appt, onClose, onDone }) {
   useEffect(() => {
     if (appt) {
       setDate(appt.date || '');
-      setTime(appt.time || '');
+      setTime('');
       setError('');
       setSaving(false);
     }
   }, [appt]);
 
-  function validate() {
-    if (!date || !time) return 'Choose both a date and time.';
-    const selected = parseDateTime(date, time);
-    if (!selected) return 'Enter a valid appointment date and time.';
-    if (selected.getTime() <= Date.now()) return 'Choose a future date and time.';
-    return '';
-  }
+  const fetchDays = useCallback((month) => doctorService.getSlotDays(month, appt?.id).then((res) => res.data?.days || []), [appt?.id]);
 
   async function submit(event) {
     event.preventDefault();
-    const validation = validate();
-    if (validation) { setError(validation); return; }
+    if (!date || !time) { setError('Choose a date and one of your open times.'); return; }
     setSaving(true);
     setError('');
     try {
       await doctorService.rescheduleAppointment(appt.id, { date, time });
       onDone();
-    } catch {
-      setError('Could not reschedule this appointment. Check the slot and retry.');
+    } catch (err) {
+      setError(apiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -283,20 +256,20 @@ function RescheduleModal({ appt, onClose, onDone }) {
       {appt && (
         <form onSubmit={submit} className="space-y-4" noValidate>
           <p className="text-sm text-[var(--color-text-soft)]">
-            Moving <strong>{appt.patientName || 'this patient'}</strong>’s {titleCase(appt.serviceType)} appointment.
+            Moving <strong>{appt.patientName || 'this patient'}</strong>’s {titleCase(appt.serviceType)} appointment. You can only choose times published for you.
           </p>
           <div>
-            <label htmlFor="doctor-reschedule-date" className="field-label">New date</label>
-            <input id="doctor-reschedule-date" type="date" required className="field-input" value={date} onChange={(event) => setDate(event.target.value)} aria-invalid={!!error} />
+            <label htmlFor="doctor-reschedule-date" className="field-label">New day</label>
+            <DatePicker id="doctor-reschedule-date" value={date} onChange={(next) => { setDate(next); setTime(''); }} fetchEnabledDays={fetchDays} />
           </div>
           <div>
-            <label htmlFor="doctor-reschedule-time" className="field-label">New time</label>
-            <input id="doctor-reschedule-time" type="time" required className="field-input" value={time} onChange={(event) => setTime(event.target.value)} aria-invalid={!!error} />
+            <p className="field-label">New time</p>
+            <SlotPicker date={date} value={time} onChange={setTime} excludeAppointmentId={appt.id} />
           </div>
           {error && <Alert variant="danger" title="Reschedule not saved" role="alert">{error}</Alert>}
           <div className="flex justify-end gap-2 flex-wrap">
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={saving}>{saving ? 'Saving…' : 'Save new time'}</Button>
+            <Button type="submit" variant="primary" disabled={saving || !time}>{saving ? 'Saving…' : 'Save new time'}</Button>
           </div>
         </form>
       )}

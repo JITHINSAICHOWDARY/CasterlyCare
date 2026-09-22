@@ -9,7 +9,7 @@ export const adminService = {
   rescheduleAppointment(appointmentId, payload) { return api.patch(`/admin/appointments/${appointmentId}/reschedule`, payload); },
   getEscalations() { return api.get('/admin/sos-escalations'); },
   dispatchEscalation(alertId) { return api.patch(`/admin/sos-escalations/${alertId}/dispatch`); },
-  getSlotTimes() { return api.get('/admin/slot-times'); },
-  addSlotTime(time) { return api.post('/admin/slot-times', { time }); },
+  getSlotTimes(doctorId, date) { return api.get('/admin/slot-times', { params: { doctorId, date } }); },
+  addSlotTime(doctorId, date, time) { return api.post('/admin/slot-times', { doctorId, date, time }); },
   removeSlotTime(slotId) { return api.delete(`/admin/slot-times/${slotId}`); },
 };

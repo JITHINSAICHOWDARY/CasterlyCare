@@ -1,46 +1,40 @@
 import { doctorService } from '../../api/services/doctor';
-import { API_BASE, apiErrorMessage, openSecureFile } from '../../api/client';
+import { apiErrorMessage, openSecureFile } from '../../api/client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useRealtime } from '../../context/RealtimeContext';
-import { REALTIME_EVENTS } from '../../config/realtimeEvents';
+import { REALTIME_EVENTS, APPOINTMENT_REALTIME_EVENTS, RECOVERY_REALTIME_EVENTS } from '../../config/realtimeEvents';
+import NavIcon from '../../components/NavIcon';
+import { friendlyTime } from '../../utils/time';
+import VitalsChart from '../../components/VitalsChart';
+import NotesCard from './record/NotesCard';
+import MedicinesCard from './record/MedicinesCard';
+import RestrictionsCard from './record/RestrictionsCard';
+import FollowUpModal from './record/FollowUpModal';
+import GlassLensFilter from '../../components/GlassLensFilter';
 import { DoctorDashboardShell as DashboardShell } from '../../components/RoleDashboardShell';
 import {
   Panel,
   Button,
   Badge,
   RecoveryDonut,
-  AlarmTimePicker,
-  Modal,
   Alert,
   EmptyState,
   ConfirmModal,
   LoadingState,
+  PageHeader,
 } from '../../components/ui';
 
-const DIET_TEMPLATES = ['Cardiac Diet', 'Low Sodium', 'Diabetic Diet', 'Soft Food (Post-Surgical)', 'Custom'];
-const DIET_TEMPLATE_HINTS = {
-  'Cardiac Diet': 'Limit high-sodium and heavily processed foods according to the care plan.',
-  'Low Sodium': 'Use this template when sodium restriction is part of the current plan.',
-  'Diabetic Diet': 'Use this template for carbohydrate-conscious guidance configured by the clinical team.',
-  'Soft Food (Post-Surgical)': 'Use for texture-modified foods when clinically appropriate.',
-  Custom: 'Add the specific ingredients or items to avoid for this recovery episode.',
-};
-const MED_FORMS = ['Tablet', 'Syrup', 'Injection', 'Ointment'];
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const ACCEPTED_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 
 function formatDate(value) {
   if (!value) return 'Not recorded';
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? 'Not recorded' : date.toLocaleDateString();
+  const date = new Date(String(value).length <= 10 ? `${value}T00:00:00` : value);
+  return Number.isNaN(date.getTime()) ? 'Not recorded' : date.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function formatDateTime(value) {
-  if (!value) return 'Not recorded';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 'Not recorded' : date.toLocaleString();
-}
+const formatDateTime = friendlyTime;
 
 function normalizeArray(value) {
   return Array.isArray(value) ? value : [];
@@ -48,15 +42,18 @@ function normalizeArray(value) {
 
 export default function DoctorPatientDetails() {
   const { patientId } = useParams();
+  const [searchParams] = useSearchParams();
+  const episodeId = searchParams.get('episode') || undefined;
   const navigate = useNavigate();
-  const { publish } = useRealtime();
+  const { subscribe } = useRealtime();
   const fileInputRef = useRef();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const [modal, setModal] = useState(null);
-  const [confirmDischarge, setConfirmDischarge] = useState(false);
   const [confirmRemoveMedicine, setConfirmRemoveMedicine] = useState(null);
+  const [confirmRemoveRestriction, setConfirmRemoveRestriction] = useState(null);
+  const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [confirmDeleteNote, setConfirmDeleteNote] = useState(null);
+  const [confirmDeleteFile, setConfirmDeleteFile] = useState(null);
   const [busyAction, setBusyAction] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   const [chatHistory, setChatHistory] = useState(null);
@@ -65,19 +62,32 @@ export default function DoctorPatientDetails() {
 
   const load = useCallback(async ({ background = false } = {}) => {
     try {
-      background ? setRefreshing(true) : setError('');
-      const res = await doctorService.getPatient(patientId);
+      if (!background) setError('');
+      const res = await doctorService.getPatient(patientId, episodeId);
       setData(res.data);
       setError('');
     } catch (err) {
       if (!background) setError(apiErrorMessage(err));
       else setActionMessage(`Refresh failed: ${apiErrorMessage(err)}`);
-    } finally {
-      setRefreshing(false);
     }
-  }, [patientId]);
+  }, [patientId, episodeId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // The recovery's days ran out while this page was open: it is now Completed.
+  useEffect(() => {
+    if (episodeId) return undefined;
+    return subscribe(REALTIME_EVENTS.CARE_EPISODE_COMPLETED, (event) => {
+      if (!event?.patientId || event.patientId === patientId) navigate('/doctor/patients?tab=completed');
+    });
+  }, [subscribe, patientId, episodeId, navigate]);
+
+  // Keeps the record current without a manual refresh.
+  useEffect(() => {
+    const events = [...APPOINTMENT_REALTIME_EVENTS, ...RECOVERY_REALTIME_EVENTS];
+    const cleanups = events.map((eventName) => subscribe(eventName, () => load({ background: true })));
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [subscribe, load]);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,23 +102,12 @@ export default function DoctorPatientDetails() {
     setActionMessage('');
     try {
       const response = await doctorService.updateRecoveryDays(patientId, delta);
-      publish(REALTIME_EVENTS.RECOVERY_UPDATED, { patientId, delta, recovery: response?.data?.recovery || response?.data?.surgery || null });
+      if (response?.data?.completed) {
+        navigate('/doctor/patients?tab=completed');
+        return;
+      }
       await load({ background: true });
       setActionMessage(delta > 0 ? 'Recovery duration extended by 1 day.' : 'Recovery duration reduced by 1 day.');
-    } catch (err) {
-      setActionMessage(apiErrorMessage(err));
-    } finally {
-      setBusyAction('');
-    }
-  }
-
-  async function handleDischarge() {
-    setBusyAction('discharge');
-    try {
-      await doctorService.dischargePatient(patientId);
-      publish(REALTIME_EVENTS.CARE_EPISODE_COMPLETED, { patientId });
-      setConfirmDischarge(false);
-      navigate('/doctor/patients');
     } catch (err) {
       setActionMessage(apiErrorMessage(err));
     } finally {
@@ -137,6 +136,51 @@ export default function DoctorPatientDetails() {
       await doctorService.uploadPatientFile(patientId, formData);
       await load({ background: true });
       setActionMessage('Patient file uploaded successfully.');
+    } catch (err) {
+      setActionMessage(apiErrorMessage(err));
+    } finally {
+      setBusyAction('');
+    }
+  }
+
+  async function deleteNote() {
+    if (!confirmDeleteNote) return;
+    setBusyAction(`note:${confirmDeleteNote.id}`);
+    try {
+      await doctorService.deleteNote(patientId, confirmDeleteNote.id);
+      setConfirmDeleteNote(null);
+      await load({ background: true });
+      setActionMessage('Note deleted.');
+    } catch (err) {
+      setActionMessage(apiErrorMessage(err));
+    } finally {
+      setBusyAction('');
+    }
+  }
+
+  async function deleteFile() {
+    if (!confirmDeleteFile) return;
+    setBusyAction(`filedel:${confirmDeleteFile.id}`);
+    try {
+      await doctorService.deleteFile(patientId, confirmDeleteFile.id);
+      setConfirmDeleteFile(null);
+      await load({ background: true });
+      setActionMessage('File deleted.');
+    } catch (err) {
+      setActionMessage(apiErrorMessage(err));
+    } finally {
+      setBusyAction('');
+    }
+  }
+
+  async function removeRestriction() {
+    if (!confirmRemoveRestriction) return;
+    setBusyAction(`restriction:${confirmRemoveRestriction.id}`);
+    try {
+      await doctorService.deleteFoodRestriction(patientId, confirmRemoveRestriction.id);
+      setConfirmRemoveRestriction(null);
+      await load({ background: true });
+      setActionMessage('Food restriction removed.');
     } catch (err) {
       setActionMessage(apiErrorMessage(err));
     } finally {
@@ -182,37 +226,43 @@ export default function DoctorPatientDetails() {
   const notes = normalizeArray(data.notes);
   const medicines = normalizeArray(data.medicines);
   const foodRestrictions = normalizeArray(data.foodRestrictions);
+  const vitals = normalizeArray(data.vitals);
   const totalDays = Math.max(0, Number(recovery.totalDays) || 0);
   const remainingDays = Math.max(0, Math.min(Number(recovery.daysRemaining) || 0, totalDays));
   const completedDays = Math.max(0, totalDays - remainingDays);
   const recoveryComplete = totalDays > 0 && remainingDays === 0;
+  const readOnly = Boolean(data.readOnly);
+  const backTo = readOnly ? '/doctor/patients?tab=completed' : '/doctor/patients';
 
   return (
     <DashboardShell>
-      <div className="mb-5 flex items-center justify-between gap-3 flex-wrap">
-        <button
-          onClick={() => navigate('/doctor/patients')}
-          className="text-sm text-[var(--color-text-soft)] hover:text-[var(--color-crimson)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] rounded"
-        >
-          &larr; Back to patients
-        </button>
-        <Button variant="outline" onClick={() => load({ background: true })} disabled={refreshing}>
-          {refreshing ? 'Refreshing…' : 'Refresh record'}
-        </Button>
-      </div>
+      <div className="doctor-record-page">
+      <GlassLensFilter />
+      <button type="button" onClick={() => navigate(backTo)} className="back-link">
+        <NavIcon name="chevronLeft" size={16} />
+        Back to patients
+      </button>
 
-      <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-gold-strong)]">Active patient record</p>
-          <h1 className="font-display text-3xl text-[var(--color-ink)]">{patient.name || 'Patient'}</h1>
-          <p className="text-[var(--color-text-soft)]">
-            {surgery.surgeryName || 'Procedure not recorded'} &middot; Blood group {patient.bloodGroup || 'Not recorded'}
-          </p>
+      <PageHeader
+        eyebrow={readOnly ? 'Completed recovery record' : 'Active patient record'}
+        title={patient.name || 'Patient'}
+        subtitle={surgery.surgeryName || 'Procedure not recorded'}
+      >
+        <div className="record-chips">
+          <span className="record-chip"><span>Blood group</span><strong>{patient.bloodGroup || 'Not recorded'}</strong></span>
+          <span className="record-chip"><span>Phone</span><strong>{patient.phone || 'Not recorded'}</strong></span>
+          {readOnly
+            ? <span className="record-chip"><span>Completed</span><strong>{formatDate(recovery.dischargeDate || recovery.completedAt)}</strong></span>
+            : <span className="record-chip"><span>Days left</span><strong>{remainingDays}</strong></span>}
+          {data.needsReview ? <span className="record-chip is-alert"><strong>Needs review</strong></span> : null}
         </div>
-        <Button variant="danger" onClick={() => setConfirmDischarge(true)} disabled={busyAction === 'discharge'}>
-          {busyAction === 'discharge' ? 'Discharging…' : 'Recovery Completed / Discharge'}
-        </Button>
-      </div>
+      </PageHeader>
+
+      {readOnly ? (
+        <div className="mb-5" role="status">
+          <Alert variant="ink" title="This recovery is complete">This is a read-only record. Notes, medicines, files and diet can no longer be changed.</Alert>
+        </div>
+      ) : null}
 
       {actionMessage ? (
         <div className="mb-5" role="status" aria-live="polite">
@@ -222,8 +272,8 @@ export default function DoctorPatientDetails() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
-        <Panel title="Recovery Tracker" className="xl:col-span-1">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+        <Panel title="Recovery Tracker">
           <div className="flex flex-col items-center">
             <RecoveryDonut totalDays={totalDays} daysRemaining={remainingDays} />
             <div className="grid grid-cols-3 gap-2 w-full mt-4 text-center">
@@ -237,134 +287,126 @@ export default function DoctorPatientDetails() {
                 <p className="field-label">Remaining</p><p className="font-semibold">{remainingDays}</p>
               </div>
             </div>
-            <p className="text-xs text-[var(--color-text-soft)] text-center mt-3">
-              {recoveryComplete ? 'Configured recovery duration has reached zero remaining days.' : 'Adjust the configured recovery duration based on clinical review.'}
-            </p>
+            {readOnly ? null : (
             <div className="flex gap-2 mt-4 flex-wrap justify-center">
-              <Button variant="outline" onClick={() => adjustRecovery(-1)} disabled={!remainingDays || busyAction === 'recovery:-1'}>
-                {busyAction === 'recovery:-1' ? 'Updating…' : '− Reduce 1 day'}
-              </Button>
-              <Button variant="outline" onClick={() => adjustRecovery(1)} disabled={busyAction === 'recovery:1'}>
-                {busyAction === 'recovery:1' ? 'Updating…' : '+ Extend 1 day'}
-              </Button>
-            </div>
+                <Button variant="outline" onClick={() => adjustRecovery(-1)} disabled={!remainingDays || busyAction === 'recovery:-1'}>
+                  {busyAction === 'recovery:-1' ? 'Updating…' : 'Reduce by 1 day'}
+                </Button>
+                <Button variant="outline" onClick={() => adjustRecovery(1)} disabled={busyAction === 'recovery:1'}>
+                  {busyAction === 'recovery:1' ? 'Updating…' : 'Extend by 1 day'}
+                </Button>
+              </div>
+            )}
           </div>
         </Panel>
 
-        <Panel title="Current Care Episode" className="xl:col-span-2">
+        <Panel title={readOnly ? 'Care episode' : 'Current Care Episode'} action={readOnly ? null : <Button variant="outline" onClick={() => setFollowUpOpen(true)}>Schedule follow-up</Button>}>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 text-sm">
             <div><p className="field-label">Procedure</p><p className="font-semibold">{surgery.surgeryName || 'Not recorded'}</p></div>
             <div><p className="field-label">Recovery start</p><p>{formatDate(surgery.startDate)}</p></div>
             <div><p className="field-label">Recovery plan</p><p>{totalDays ? `${totalDays} configured days` : 'Not recorded'}</p></div>
-            <div><p className="field-label">Care status</p><Badge variant={recoveryComplete ? 'forest' : 'gold'}>{recoveryComplete ? 'Recovery duration reached' : 'Active recovery'}</Badge></div>
+            <div><p className="field-label">Care status</p><Badge variant={readOnly ? 'ink' : recoveryComplete ? 'forest' : 'gold'}>{readOnly ? 'Completed' : recoveryComplete ? 'Recovery duration reached' : 'Active recovery'}</Badge></div>
             <div><p className="field-label">Email</p><p className="break-words">{patient.email || 'Not recorded'}</p></div>
             <div><p className="field-label">Phone</p><p>{patient.phone || 'Not recorded'}</p></div>
             <div className="sm:col-span-2"><p className="field-label">Allergies</p><p>{patient.allergies || 'None recorded'}</p></div>
           </div>
-          <p className="text-xs text-[var(--color-text-soft)] mt-5">
-            This workspace shows the patient currently under your active recovery care. Historical surgical records are retained in the patient record; they do not create a permanent doctor assignment.
-          </p>
         </Panel>
       </div>
+
+      <Panel
+        title="Recovery check-ins"
+        className="mb-6"
+        action={data.needsReview ? <Badge variant="danger">Needs review</Badge> : null}
+      >
+        {vitals.length === 0 ? (
+          <EmptyState title="No check-ins yet" subtitle="Recorded vitals will appear here as the patient submits them." />
+        ) : (
+          <>
+          <VitalsChart vitals={vitals} />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm vitals-table">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-[var(--color-text-soft)] border-b border-[var(--color-line)]">
+                  <th className="pb-2 pr-3">Recorded</th>
+                  <th className="pb-2 pr-3">SpO₂</th>
+                  <th className="pb-2 pr-3">Blood pressure</th>
+                  <th className="pb-2 pr-3">Heart rate</th>
+                  <th className="pb-2 pr-3">Temp</th>
+                  <th className="pb-2">Assessment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vitals.map((item) => (
+                  <tr key={item.id} className="border-b border-[var(--color-line)] last:border-0">
+                    <td data-label="Recorded" className="py-2.5 pr-3 whitespace-nowrap">{formatDateTime(item.measuredAt)}</td>
+                    <td data-label="SpO₂" className="py-2.5 pr-3">{item.spo2}%</td>
+                    <td data-label="Blood pressure" className="py-2.5 pr-3">{item.systolic}/{item.diastolic}</td>
+                    <td data-label="Heart rate" className="py-2.5 pr-3">{item.heartRate} bpm</td>
+                    <td data-label="Temp" className="py-2.5 pr-3">{item.temperature}°C</td>
+                    <td data-label="Assessment" className="py-2.5">
+                      <Badge variant={item.anomalyLabel === 'outlier' ? 'danger' : 'forest'}>{item.anomalyLabel === 'outlier' ? 'Outside range' : 'Within range'}</Badge>
+                      <span className="ml-2 text-xs text-[var(--color-text-soft)]">{item.trendLabel}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </>
+        )}
+      </Panel>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
         <Panel
           title="Files & Reports"
-          action={<Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busyAction === 'file'}>{busyAction === 'file' ? 'Uploading…' : '+ Upload PDF/JPG/PNG'}</Button>}
+          action={readOnly ? null : <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busyAction === 'file'}>{busyAction === 'file' ? 'Uploading…' : 'Upload file'}</Button>}
         >
           <input type="file" hidden ref={fileInputRef} accept=".pdf,.jpg,.jpeg,.png" onChange={handleFileUpload} />
-          <p className="text-xs text-[var(--color-text-soft)] mb-3">Clinical documents only. Maximum file size: 5 MB.</p>
-          {files.length === 0 ? <EmptyState title="No files yet" subtitle="Uploaded clinical reports will appear here." /> : (
+          {readOnly ? null : <p className="text-xs text-[var(--color-text-soft)] mb-3">Clinical documents only. Maximum file size: 5 MB.</p>}
+          {files.length === 0 ? <EmptyState title="No files yet" subtitle={readOnly ? 'No files were uploaded during this recovery.' : 'Uploaded clinical reports will appear here.'} /> : (
             <div className="space-y-2">
               {files.map((file) => {
                 const isSecureFile = typeof file.fileUrl === 'string' && file.fileUrl.startsWith('/uploads/patient_files/');
                 return isSecureFile ? (
-                  <button
-                    key={file.id}
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await openSecureFile(file.fileUrl);
-                      } catch (err) {
-                        setActionMessage(apiErrorMessage(err) || 'Unable to open file.');
-                      }
-                    }}
-                    className="w-full flex items-center justify-between gap-3 p-3 rounded-md border border-[var(--color-line)] hover:border-[var(--color-crimson)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] text-left"
-                  >
-                    <span className="min-w-0"><span className="block text-sm font-semibold truncate">{file.label || 'Untitled document'}</span><span className="block text-xs text-[var(--color-text-soft)]">Added {formatDateTime(file.createdAt)}</span></span>
-                    <Badge variant="ink">{String(file.fileType || 'FILE').toUpperCase()}</Badge>
-                  </button>
+                  <div key={file.id} className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await openSecureFile(file.fileUrl);
+                        } catch (err) {
+                          setActionMessage(apiErrorMessage(err) || 'Unable to open file.');
+                        }
+                      }}
+                      className="min-w-0 flex-1 flex items-center justify-between gap-3 p-3 rounded-md border border-[var(--color-line)] hover:border-[var(--color-crimson)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] text-left"
+                    >
+                      <span className="min-w-0"><span className="block text-sm font-semibold truncate">{file.label || 'Untitled document'}</span><span className="block text-xs text-[var(--color-text-soft)]">Added {formatDateTime(file.createdAt)}</span></span>
+                      <Badge variant="ink">{String(file.fileType || 'FILE').toUpperCase()}</Badge>
+                    </button>
+                    {readOnly ? null : <Button variant="ghost" onClick={() => setConfirmDeleteFile(file)} disabled={busyAction === `filedel:${file.id}`}>Delete</Button>}
+                  </div>
                 ) : <div key={file.id} className="p-3 rounded-md border border-[var(--color-line)]"><p className="text-sm">Secure file link unavailable.</p></div>;
               })}
             </div>
           )}
         </Panel>
 
-        <Panel title="Private Doctor's Notes" action={<Button variant="outline" onClick={() => setModal('note')}>+ Add Note</Button>}>
-          <p className="text-xs text-[var(--color-text-soft)] mb-3">Private clinical observations visible only to authorized doctors.</p>
-          {notes.length === 0 ? <EmptyState title="No notes yet" subtitle="Add clinical observations after a patient review or appointment." /> : (
-            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-              {notes.map((note) => (
-                <article key={note.id} className="p-3 rounded-md bg-[var(--color-parchment-deep)]">
-                  <p className="text-sm whitespace-pre-wrap break-words">{note.content}</p>
-                  <p className="text-xs text-[var(--color-text-soft)] mt-2">Recorded {formatDateTime(note.createdAt)}</p>
-                </article>
-              ))}
-            </div>
-          )}
-        </Panel>
+        <NotesCard notes={notes} readOnly={readOnly} patientId={patientId} busyAction={busyAction} onDelete={setConfirmDeleteNote} onSaved={load} />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <Panel title="Active Medicines" action={<Button variant="outline" onClick={() => setModal('medicine')}>+ Add Medicine</Button>}>
-          {medicines.length === 0 ? <EmptyState title="No medicines prescribed" subtitle="Active prescriptions entered for this recovery episode will appear here." /> : (
-            <div className="space-y-2">
-              {medicines.map((medicine) => (
-                <div key={medicine.id} className="flex items-start justify-between gap-3 p-3 rounded-md border border-[var(--color-line)]">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold break-words">{medicine.name || 'Unnamed medicine'} <span className="text-[var(--color-text-soft)] font-normal">&middot; {medicine.dosage || 'Dosage not recorded'}</span></p>
-                    <p className="text-xs text-[var(--color-text-soft)] mt-1">{medicine.form || 'Form not recorded'} &middot; {medicine.frequency || 'Frequency not recorded'}</p>
-                    <div className="flex gap-1 flex-wrap mt-2">{normalizeArray(medicine.times).length ? normalizeArray(medicine.times).map((time, index) => <Badge key={`${medicine.id}-${index}`} variant="gold">{time}</Badge>) : <Badge variant="ink">Reminder time not recorded</Badge>}</div>
-                  </div>
-                  <Button variant="ghost" onClick={() => setConfirmRemoveMedicine(medicine)} disabled={busyAction === `medicine:${medicine.id}`}>{busyAction === `medicine:${medicine.id}` ? 'Removing…' : 'Remove'}</Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Panel>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+        <MedicinesCard medicines={medicines} readOnly={readOnly} patientId={patientId} busyAction={busyAction} onRemove={setConfirmRemoveMedicine} onSaved={load} />
 
-        <Panel title="Food Restrictions" subtitle="Clinician-configured dietary rules for the current recovery episode." action={<Button variant="outline" onClick={() => setModal('diet')}>+ Add Restriction</Button>}>
-          {foodRestrictions.length === 0 ? <EmptyState title="No restrictions set" subtitle="Add active dietary restrictions for this recovery episode." /> : (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <p className="text-xs text-[var(--color-text-soft)]">{foodRestrictions.length} active restriction record{foodRestrictions.length === 1 ? '' : 's'}</p>
-                <Badge variant="forest">Current episode</Badge>
-              </div>
-              {foodRestrictions.map((restriction, index) => (
-                <article key={restriction.id || `restriction-${index}`} className="p-4 rounded-md border border-[var(--color-line)] bg-[var(--color-surface-muted)]">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="min-w-0">
-                      {restriction.dietTemplate ? <Badge variant="amber">{restriction.dietTemplate}</Badge> : <Badge variant="ink">Custom restriction</Badge>}
-                      <p className="text-sm font-semibold mt-2 break-words">{restriction.ingredientsToAvoid || 'Restriction details not recorded'}</p>
-                    </div>
-                    <span className="text-xs text-[var(--color-text-soft)]">{formatDateTime(restriction.createdAt)}</span>
-                  </div>
-                  <p className="text-xs text-[var(--color-text-soft)] mt-2">Applies to the current recovery episode; historical restrictions are retained in the clinical record.</p>
-                </article>
-              ))}
-            </div>
-          )}
-        </Panel>
+        <RestrictionsCard restrictions={foodRestrictions} readOnly={readOnly} patientId={patientId} busyAction={busyAction} onRemove={setConfirmRemoveRestriction} onSaved={load} />
       </div>
 
       <Panel
         title="Emergency Chat History"
-        subtitle="Closed Priority Inbox conversations for this patient, retained for clinical and compliance reference."
       >
         {chatHistoryError ? (
           <Alert variant="danger" title="Chat history unavailable">{chatHistoryError}</Alert>
         ) : chatHistory === null ? (
-          <p className="text-xs text-[var(--color-text-soft)]">Loading chat history…</p>
+          <LoadingState label="Loading chat history…" rows={2} />
         ) : chatHistory.length === 0 ? (
           <EmptyState title="No past emergency chats" subtitle="Closed conversations with this patient will be archived here." />
         ) : (
@@ -407,18 +449,36 @@ export default function DoctorPatientDetails() {
         )}
       </Panel>
 
-      <AddNoteModal open={modal === 'note'} onClose={() => setModal(null)} patientId={patientId} onSaved={load} />
-      <AddMedicineModal open={modal === 'medicine'} onClose={() => setModal(null)} patientId={patientId} onSaved={load} />
-      <AddDietModal open={modal === 'diet'} onClose={() => setModal(null)} patientId={patientId} onSaved={load} />
+      <FollowUpModal open={followUpOpen} onClose={() => setFollowUpOpen(false)} patientId={patientId} onSaved={() => setActionMessage('Follow-up scheduled.')} />
 
       <ConfirmModal
-        open={confirmDischarge}
-        title="Confirm discharge"
-        body={`This will mark ${patient.name || 'this patient'}'s recovery as complete and remove the patient from your active care list. Historical records remain retained.`}
-        confirmLabel={busyAction === 'discharge' ? 'Discharging…' : 'Confirm Discharge'}
-        onConfirm={handleDischarge}
-        onCancel={() => setConfirmDischarge(false)}
-        confirmDisabled={busyAction === 'discharge'}
+        open={Boolean(confirmDeleteNote)}
+        title="Delete note"
+        body="Delete this private note? This cannot be undone."
+        confirmLabel={busyAction.startsWith('note:') ? 'Deleting…' : 'Delete note'}
+        onConfirm={deleteNote}
+        onCancel={() => setConfirmDeleteNote(null)}
+        confirmDisabled={busyAction.startsWith('note:')}
+      />
+
+      <ConfirmModal
+        open={Boolean(confirmDeleteFile)}
+        title="Delete file"
+        body={`Delete "${confirmDeleteFile?.label || 'this file'}"? It will also disappear from the patient's own reports, and cannot be recovered.`}
+        confirmLabel={busyAction.startsWith('filedel:') ? 'Deleting…' : 'Delete file'}
+        onConfirm={deleteFile}
+        onCancel={() => setConfirmDeleteFile(null)}
+        confirmDisabled={busyAction.startsWith('filedel:')}
+      />
+
+      <ConfirmModal
+        open={Boolean(confirmRemoveRestriction)}
+        title="Remove food restriction"
+        body={`Remove "${confirmRemoveRestriction?.ingredientsToAvoid || 'this restriction'}" from this recovery episode? The patient's diet checks will stop enforcing it.`}
+        confirmLabel={busyAction.startsWith('restriction:') ? 'Removing…' : 'Remove restriction'}
+        onConfirm={removeRestriction}
+        onCancel={() => setConfirmRemoveRestriction(null)}
+        confirmDisabled={busyAction.startsWith('restriction:')}
       />
 
       <ConfirmModal
@@ -430,202 +490,7 @@ export default function DoctorPatientDetails() {
         onCancel={() => setConfirmRemoveMedicine(null)}
         confirmDisabled={busyAction.startsWith('medicine:')}
       />
+      </div>
     </DashboardShell>
   );
-}
-
-function AddNoteModal({ open, onClose, patientId, onSaved }) {
-  const [content, setContent] = useState('');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => { if (!open) { setContent(''); setError(''); } }, [open]);
-
-  async function submit(e) {
-    e.preventDefault();
-    if (!content.trim()) { setError('Note content is required.'); return; }
-    setSaving(true); setError('');
-    try { await doctorService.addNote(patientId, content.trim()); setContent(''); await onSaved({ background: true }); onClose(); }
-    catch (err) { setError(apiErrorMessage(err)); }
-    finally { setSaving(false); }
-  }
-
-  return <Modal open={open} title="Add Private Note" description="This note is restricted to authorized clinical staff." onClose={onClose}>
-    <form onSubmit={submit} className="space-y-4">
-      <div><label className="field-label" htmlFor="doctor-private-note">Clinical observation</label><textarea id="doctor-private-note" required rows={6} maxLength={4000} className="field-textarea" placeholder="Record clinical observations…" value={content} onChange={(e) => setContent(e.target.value)} aria-describedby={error ? 'doctor-private-note-error' : undefined} /></div>
-      {error ? <Alert variant="danger" id="doctor-private-note-error">{error}</Alert> : null}
-      <Button type="submit" variant="primary" className="w-full" disabled={saving}>{saving ? 'Saving…' : 'Save Note'}</Button>
-    </form>
-  </Modal>;
-}
-
-function AddMedicineModal({ open, onClose, patientId, onSaved }) {
-  const [form, setForm] = useState({ name: '', form: MED_FORMS[0], dosage: '', frequency: '', times: ['08:00 AM'] });
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      setForm({ name: '', form: MED_FORMS[0], dosage: '', frequency: '', times: ['08:00 AM'] });
-      setError('');
-      setSaving(false);
-    }
-  }, [open]);
-
-  function setField(key, value) {
-    setForm((current) => ({ ...current, [key]: value }));
-  }
-
-  function setTimeAt(index, value) {
-    setForm((current) => {
-      const times = [...current.times];
-      times[index] = value;
-      return { ...current, times };
-    });
-  }
-
-  function addTime() {
-    setForm((current) => ({ ...current, times: [...current.times, '12:00 PM'] }));
-  }
-
-  function removeTime(index) {
-    setForm((current) => ({
-      ...current,
-      times: current.times.filter((_, timeIndex) => timeIndex !== index),
-    }));
-  }
-
-  function normalizeTime(value) {
-    /*
-     * AlarmTimePicker produces values like "8:00 AM" - a
-     * human-friendly 12-hour format - but the backend's medicine
-     * route strictly validates times as 24-hour "HH:MM" (e.g.
-     * "08:00") and rejects anything else. That mismatch meant
-     * every single submission failed validation regardless of
-     * what was actually picked. Convert here, at the API
-     * boundary, so the picker's UI can stay 12-hour.
-     */
-    const trimmed = typeof value === 'string' ? value.trim().toUpperCase() : '';
-    const match = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
-
-    if (!match) {
-      return '';
-    }
-
-    let hour = Number(match[1]);
-    const minute = match[2];
-    const period = match[3];
-
-    if (hour < 1 || hour > 12 || Number(minute) > 59) {
-      return '';
-    }
-
-    if (period === 'AM' && hour === 12) hour = 0;
-    if (period === 'PM' && hour !== 12) hour += 12;
-
-    return `${String(hour).padStart(2, '0')}:${minute}`;
-  }
-
-  async function submit(e) {
-    e.preventDefault();
-    const name = form.name.trim();
-    const dosage = form.dosage.trim();
-    const frequency = form.frequency.trim();
-    const times = form.times.map(normalizeTime).filter(Boolean);
-    const uniqueTimes = [...new Set(times)];
-
-    if (!name || !dosage || !frequency) {
-      setError('Medicine name, dosage, and frequency are required.');
-      return;
-    }
-    if (uniqueTimes.length !== times.length) {
-      setError('Reminder times must be unique.');
-      return;
-    }
-    if (uniqueTimes.length === 0) {
-      setError('Add at least one alarm-style reminder time.');
-      return;
-    }
-
-    setSaving(true);
-    setError('');
-    try {
-      await doctorService.addMedicine(patientId, { ...form, name, dosage, frequency, times: uniqueTimes });
-      await onSaved({ background: true });
-      onClose();
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return <Modal open={open} title="Add Medicine" description="Add the active prescription for this recovery episode." onClose={onClose}>
-    <form onSubmit={submit} className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div><label className="field-label" htmlFor="medicine-name">Medicine name</label><input id="medicine-name" required maxLength={160} autoComplete="off" className="field-input" value={form.name} onChange={(e) => setField('name', e.target.value)} /></div>
-        <div><label className="field-label" htmlFor="medicine-form">Form</label><select id="medicine-form" className="field-select" value={form.form} onChange={(e) => setField('form', e.target.value)}>{MED_FORMS.map((option) => <option key={option}>{option}</option>)}</select></div>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div><label className="field-label" htmlFor="medicine-dosage">Dosage</label><input id="medicine-dosage" required maxLength={120} placeholder="e.g. 500mg" className="field-input" value={form.dosage} onChange={(e) => setField('dosage', e.target.value)} /></div>
-        <div><label className="field-label" htmlFor="medicine-frequency">Frequency</label><input id="medicine-frequency" required maxLength={120} placeholder="e.g. Twice daily" className="field-input" value={form.frequency} onChange={(e) => setField('frequency', e.target.value)} /></div>
-      </div>
-      <fieldset className="space-y-3">
-        <legend className="field-label">Reminder times</legend>
-        <p className="text-xs text-[var(--color-text-soft)]">Select alarm-style times rather than typing them. Add one reminder for each scheduled dose.</p>
-        <div className="space-y-2">
-          {form.times.map((time, index) => (
-            <div key={`medicine-time-${index}`} className="flex items-center gap-2 flex-wrap">
-              <div className="flex-1 min-w-[14rem]"><span className="sr-only">Reminder time {index + 1}</span><AlarmTimePicker value={time} onChange={(value) => setTimeAt(index, value)} /></div>
-              <Button type="button" variant="ghost" onClick={() => removeTime(index)} disabled={form.times.length === 1 || saving} aria-label={`Remove reminder time ${index + 1}`}>Remove</Button>
-            </div>
-          ))}
-        </div>
-        <Button type="button" variant="outline" onClick={addTime} disabled={saving || form.times.length >= 8}>+ Add reminder time</Button>
-        {form.times.length >= 8 ? <p className="text-xs text-[var(--color-text-soft)]">Maximum of 8 reminder times per prescription.</p> : null}
-      </fieldset>
-      {error ? <Alert variant="danger">{error}</Alert> : null}
-      <Button type="submit" variant="primary" className="w-full" disabled={saving}>{saving ? 'Adding…' : 'Add Medicine'}</Button>
-    </form>
-  </Modal>;
-}
-
-function AddDietModal({ open, onClose, patientId, onSaved }) {
-  const [dietTemplate, setDietTemplate] = useState(DIET_TEMPLATES[0]);
-  const [ingredients, setIngredients] = useState('');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => { if (!open) { setDietTemplate(DIET_TEMPLATES[0]); setIngredients(''); setError(''); setSaving(false); } }, [open]);
-
-  async function submit(e) {
-    e.preventDefault();
-    const normalized = ingredients.split(',').map((item) => item.trim()).filter(Boolean);
-    const unique = [...new Set(normalized.map((item) => item.toLowerCase()).map((lower) => normalized.find((item) => item.toLowerCase() === lower)))];
-    if (unique.length === 0) { setError('Please list at least one ingredient or item to avoid.'); return; }
-    if (unique.join(', ').length > 2000) { setError('Keep the restriction details within 2,000 characters.'); return; }
-    setSaving(true); setError('');
-    try {
-      await doctorService.addFoodRestriction(patientId, { dietTemplate, ingredientsToAvoid: unique.join(', ') });
-      await onSaved({ background: true });
-      onClose();
-    }
-    catch (err) { setError(apiErrorMessage(err)); }
-    finally { setSaving(false); }
-  }
-
-  const hint = DIET_TEMPLATE_HINTS[dietTemplate] || DIET_TEMPLATE_HINTS.Custom;
-
-  return <Modal open={open} title="Add Food Restriction" description="These clinician-configured restrictions apply to the current recovery episode." onClose={onClose}>
-    <form onSubmit={submit} className="space-y-4">
-      <div><label className="field-label" htmlFor="diet-template">Diet template</label><select id="diet-template" className="field-select" value={dietTemplate} onChange={(e) => setDietTemplate(e.target.value)}>{DIET_TEMPLATES.map((option) => <option key={option}>{option}</option>)}</select><p className="text-xs text-[var(--color-text-soft)] mt-1">{hint}</p></div>
-      <div>
-        <label className="field-label" htmlFor="diet-restrictions">Ingredients / items to avoid</label>
-        <textarea id="diet-restrictions" required rows={4} maxLength={2000} className="field-textarea" placeholder="e.g. salt, fried food, red meat" value={ingredients} onChange={(e) => setIngredients(e.target.value)} aria-describedby="diet-restrictions-help" />
-        <p id="diet-restrictions-help" className="text-xs text-[var(--color-text-soft)] mt-1">Separate multiple items with commas. Duplicate items are collapsed before saving.</p>
-      </div>
-      {error ? <Alert variant="danger">{error}</Alert> : null}
-      <Button type="submit" variant="primary" className="w-full" disabled={saving}>{saving ? 'Saving…' : 'Save Restriction'}</Button>
-    </form>
-  </Modal>;
 }

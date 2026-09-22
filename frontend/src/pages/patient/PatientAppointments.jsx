@@ -1,9 +1,7 @@
-/* PHASE 2.7.8 — Appointment accessibility & responsive hardening */
-/* PHASE 2.7.7 — Appointment reschedule & cancellation UX */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRealtime } from '../../context/RealtimeContext';
 import { APPOINTMENT_REALTIME_EVENTS } from '../../config/realtimeEvents';
-import PatientDashboardShell from '../../components/PatientDashboardShell';
+import { PatientDashboardShell } from '../../components/RoleDashboardShell';
 import {
   Alert,
   Badge,
@@ -18,6 +16,8 @@ import {
 } from '../../components/ui';
 import { patientService } from '../../api/services/patient';
 import { apiErrorMessage } from '../../api/client';
+import NavIcon from '../../components/NavIcon';
+import GlassLensFilter from '../../components/GlassLensFilter';
 
 const HOME_SERVICES = [
   { value: 'Dressing', label: 'Dressing', description: 'Post-surgical wound or dressing care at home.' },
@@ -36,14 +36,14 @@ const VISIT_OPTIONS = [
     label: 'Home Visit',
     kicker: 'Care at home',
     description: 'A clinician comes to you for dressing, physiotherapy, or a vitals check.',
-    icon: '⌂',
+    icon: 'home',
   },
   {
     value: 'hospital_visit',
     label: 'Hospital Visit',
     kicker: 'Care at hospital',
     description: 'Visit the hospital for a doctor consultation or pharmacy pickup.',
-    icon: '✚',
+    icon: 'doctors',
   },
 ];
 
@@ -95,26 +95,31 @@ export default function PatientAppointments() {
   const [actionError, setActionError] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
 
-  async function load() {
-    setLoadError('');
+  const loadedOnce = useRef(false);
+
+  const load = useCallback(async ({ background = false } = {}) => {
+    if (!background) setLoadError('');
     try {
       const res = await patientService.getAppointments();
       setAppointments(Array.isArray(res.data.appointments) ? res.data.appointments : []);
+      loadedOnce.current = true;
     } catch (error) {
-      setLoadError(error.response?.data?.error || 'Could not load appointments. Please try again.');
+      if (!loadedOnce.current) setLoadError(error.response?.data?.error || 'Could not load appointments. Please try again.');
     }
-  }
-
-  useEffect(() => {
-    load();
   }, []);
 
   useEffect(() => {
+    load();
+    const timer = setInterval(() => load({ background: true }), 15000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  useEffect(() => {
     const cleanups = APPOINTMENT_REALTIME_EVENTS.map((eventName) =>
-      subscribe(eventName, () => load()),
+      subscribe(eventName, () => load({ background: true })),
     );
     return () => cleanups.forEach((cleanup) => cleanup());
-  }, [subscribe]);
+  }, [subscribe, load]);
 
   const visible = useMemo(() => {
     const filtered = (appointments || []).filter((appointment) => (
@@ -161,12 +166,12 @@ export default function PatientAppointments() {
 
   return (
     <PatientDashboardShell>
-      <PageHeader
-        eyebrow="Patient appointments"
-        title="Appointments"
-        subtitle="Book, review, and track your visits during recovery."
-        action={<Button variant="primary" onClick={() => setShowWizard(true)}>+ Book Appointment</Button>}
-      />
+      <div className="patient-appointments-page">
+      <GlassLensFilter />
+      <div className="relative">
+        <PageHeader title="Appointments" subtitle="Book, review, and track your visits." />
+        <Button variant="primary" className="mt-3 sm:mt-0 sm:absolute sm:top-1/2 sm:-translate-y-1/2 sm:right-8 z-10" onClick={() => setShowWizard(true)}>Book Appointment</Button>
+      </div>
 
       <div className="flex flex-wrap gap-2 mb-5" role="tablist" aria-label="Appointment history views" onKeyDown={(event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -260,6 +265,7 @@ export default function PatientAppointments() {
           <Alert variant="danger" title="Appointment update failed">{actionError}</Alert>
         </div>
       ) : null}
+      </div>
 
       <BookingWizard
         open={showWizard}
@@ -480,7 +486,7 @@ function BookingWizard({ open, onClose, onBooked }) {
           <div className="appointment-booking-success__icon" aria-hidden="true">✓</div>
           <SectionHeading
             title="Your appointment is confirmed"
-            description="Keep these details for your visit. The appointment will also appear in your Upcoming appointments list."
+            subtitle="Keep these details for your visit. The appointment will also appear in your Upcoming appointments list."
           />
           <div className="appointment-review-card appointment-booking-success__details" aria-label="Confirmed appointment details">
             <div><span>Visit type</span><strong>{bookingSuccess.visitCategory === 'home_visit' ? 'Home Visit' : 'Hospital Visit'}</strong></div>
@@ -507,7 +513,7 @@ function BookingWizard({ open, onClose, onBooked }) {
     if (step === 1) {
       return (
         <div className="space-y-3" ref={firstStepFocus}>
-          <SectionHeading title={STEP_TITLES[1]} description="Choose where you would like the visit to take place." />
+          <SectionHeading title={STEP_TITLES[1]} subtitle="Choose where you would like the visit to take place." />
           <div className="appointment-choice-grid" role="list" aria-label="Visit type choices">
             {VISIT_OPTIONS.map((option) => (
               <button
@@ -517,7 +523,7 @@ function BookingWizard({ open, onClose, onBooked }) {
                 className={`appointment-choice-card ${visitCategory === option.value ? 'is-selected' : ''}`}
                 aria-pressed={visitCategory === option.value}
               >
-                <span className="appointment-choice-icon" aria-hidden="true">{option.icon}</span>
+                <span className="appointment-choice-icon" aria-hidden="true"><NavIcon name={option.icon} size={24} /></span>
                 <span className="appointment-choice-copy">
                   <span className="appointment-choice-kicker">{option.kicker}</span>
                   <span className="font-semibold text-[var(--color-ink)]">{option.label}</span>
@@ -536,7 +542,7 @@ function BookingWizard({ open, onClose, onBooked }) {
         <div className="space-y-3">
           <SectionHeading
             title={STEP_TITLES[2]}
-            description={`Choose one ${visitCategory === 'home_visit' ? 'home-care' : 'hospital'} service.`}
+            subtitle={`Choose one ${visitCategory === 'home_visit' ? 'home-care' : 'hospital'} service.`}
           />
           <div className="appointment-selection-context" aria-label="Current visit type">
             <span className="appointment-choice-kicker">Visit type</span>
@@ -569,7 +575,7 @@ function BookingWizard({ open, onClose, onBooked }) {
     if (step === 3) {
       return (
         <div className="space-y-4">
-          <SectionHeading title={STEP_TITLES[3]} description="Choose a date, then pick one of the available appointment times. These times are set by the hospital." />
+          <SectionHeading title={STEP_TITLES[3]} subtitle="Choose a date, then pick one of the available appointment times. These times are set by the hospital." />
 
           <div>
             <p className="field-label mb-2">Select Date</p>
@@ -616,7 +622,7 @@ function BookingWizard({ open, onClose, onBooked }) {
             ) : slotsError ? (
               <Alert variant="danger" title="Could not load times">{slotsError}</Alert>
             ) : !availableSlots || availableSlots.length === 0 ? (
-              <EmptyState title="No time slots configured" subtitle="The hospital has not published any appointment times yet. Please contact your care team." />
+              <EmptyState title="No times available on this day" subtitle="Your doctor has no open times for this date. Try another day or contact your care team." />
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {availableSlots.map((slot) => (
@@ -653,7 +659,7 @@ function BookingWizard({ open, onClose, onBooked }) {
 
     return (
       <div className="space-y-4">
-        <SectionHeading title={STEP_TITLES[4]} description="Confirm the details before booking." />
+        <SectionHeading title={STEP_TITLES[4]} subtitle="Confirm the details before booking." />
         <div className="appointment-review-card" aria-label="Appointment review">
           <div><span>Visit type</span><strong>{visitCategory === 'home_visit' ? 'Home Visit' : 'Hospital Visit'}</strong></div>
           <div><span>Service</span><strong>{selectedService?.label || serviceType}</strong></div>
@@ -839,7 +845,7 @@ function RescheduleAppointmentModal({ open, appointment, busy, onCancel, onSubmi
           ) : slotsError ? (
             <Alert variant="danger" title="Could not load times">{slotsError}</Alert>
           ) : !availableSlots || availableSlots.length === 0 ? (
-            <EmptyState title="No time slots configured" subtitle="The hospital has not published any appointment times yet." />
+            <EmptyState title="No times available on this day" subtitle="Your doctor has no open times for this date. Try another day." />
           ) : (
             <div className="grid grid-cols-3 gap-2">
               {availableSlots.map((slot) => {

@@ -19,11 +19,14 @@ const patientRoutes = require('./routes/patient');
 
 const {
   authenticate,
+  tokenPredatesPasswordChange,
 } = require('./middleware/auth');
 
 const {
   MedicalFile,
   CareEpisode,
+  User,
+  ChatThread,
 } = require('./models');
 
 const app = express();
@@ -61,7 +64,7 @@ app.set('io', io);
  *   - doctor:<id>         doctor connections only
  *   - role:admin          admin connections only
  */
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const token =
     socket.handshake?.auth?.token;
 
@@ -76,6 +79,19 @@ io.use((socket, next) => {
       token,
       process.env.JWT_SECRET
     );
+
+    // Same rule as the REST API: a deactivated account must not stay connected.
+    const account = await User.findByPk(payload.id, {
+      attributes: ['id', 'isActive', 'passwordChangedAt'],
+    });
+
+    if (!account || !account.isActive) {
+      return next(new Error('This account has been deactivated.'));
+    }
+
+    if (tokenPredatesPasswordChange(payload, account)) {
+      return next(new Error('Please log in again.'));
+    }
 
     socket.user = payload;
     next();
@@ -99,13 +115,26 @@ io.on('connection', (socket) => {
     }
   }
 
+  // Only the two people in a chat may listen to it.
   socket.on(
     'join_thread',
-    (threadId) => {
-      if (threadId) {
-        socket.join(
-          `thread_${threadId}`
-        );
+    async (threadId) => {
+      if (!threadId || !socket.user?.id) return;
+
+      try {
+        const thread = await ChatThread.findByPk(threadId, {
+          attributes: ['id', 'patientId', 'doctorId'],
+        });
+
+        if (
+          thread &&
+          (thread.patientId === socket.user.id ||
+            thread.doctorId === socket.user.id)
+        ) {
+          socket.join(`thread_${threadId}`);
+        }
+      } catch (err) {
+        console.error('join_thread check failed:', err);
       }
     }
   );
@@ -258,28 +287,33 @@ app.get(
       }
 
       /*
-       * Doctor access requires an ACTIVE CareEpisode
-       * connecting the doctor to this patient.
+       * Doctor access requires a CareEpisode
+       * the doctor treated (see below).
        */
       else if (
         req.user.role ===
         'doctor'
       ) {
-        const activeEpisode =
+        /*
+         * A doctor may open files from any recovery they treated (active or
+         * completed), so a discharged patient's record can still be reviewed.
+         * Legacy files with no episode fall back to an active assignment.
+         */
+        const episode =
           await CareEpisode.findOne({
-            where: {
-              doctorId:
-                req.user.id,
-
-              patientId:
-                file.patientId,
-
-              status:
-                'active',
-            },
+            where: file.careEpisodeId
+              ? {
+                  id: file.careEpisodeId,
+                  doctorId: req.user.id,
+                }
+              : {
+                  doctorId: req.user.id,
+                  patientId: file.patientId,
+                  status: 'active',
+                },
           });
 
-        if (!activeEpisode) {
+        if (!episode) {
           return res.status(403).json({
             error:
               'You are not currently authorized to access this patient medical file.',
@@ -575,8 +609,73 @@ const {
   startRecoveryScheduler,
 } = require('./utils/scheduler');
 
-sequelize
-  .sync()
+// One-off, idempotent, cross-dialect column add — plain sync() creates new
+// tables (fine for the new otp_codes table) but never alters existing ones,
+// and this repo has no migration runner. Safe to run on every boot.
+async function ensureGoogleIdColumn() {
+  const table = await sequelize.getQueryInterface().describeTable('users');
+  if (!table.googleId) {
+    await sequelize.getQueryInterface().addColumn('users', 'googleId', {
+      type: require('sequelize').DataTypes.STRING,
+    });
+  }
+
+  // addColumn above can't reliably express the model's `unique: true` on
+  // every dialect, so a fresh DB (created via sync()) and an upgraded one
+  // would otherwise end up with different schemas. A unique index gives
+  // the same guarantee on both; NULLs (patients who haven't linked Google)
+  // don't count as duplicates under it. Attempted every boot and no-ops
+  // once it exists.
+  try {
+    await sequelize.getQueryInterface().addIndex('users', ['googleId'], {
+      unique: true,
+      name: 'users_google_id_unique',
+    });
+  } catch (err) {
+    if (!/already exists|duplicate/i.test(err.message)) throw err;
+  }
+}
+
+// Two requests racing for the same time could both pass the "is it free?"
+// check. These partial unique indexes make the database the final judge.
+// Skipped with a warning if legacy duplicate rows already exist.
+async function ensureAppointmentIndexes() {
+  const indexes = [
+    ['appointments_doctor_slot_unique', '"doctorId"'],
+    ['appointments_patient_slot_unique', '"patientId"'],
+  ];
+
+  for (const [name, column] of indexes) {
+    try {
+      await sequelize.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${name} ON appointments (${column}, "date", "time") WHERE "status" = 'upcoming'`
+      );
+    } catch (err) {
+      console.warn(`Could not create ${name} (existing duplicate bookings?):`, err.message);
+    }
+  }
+}
+
+// Same one-off, idempotent column add as googleId above (no migration runner).
+async function ensurePasswordChangedAtColumn() {
+  const table = await sequelize.getQueryInterface().describeTable('users');
+  if (!table.passwordChangedAt) {
+    await sequelize.getQueryInterface().addColumn('users', 'passwordChangedAt', {
+      type: require('sequelize').DataTypes.DATE,
+    });
+  }
+}
+
+ensureGoogleIdColumn()
+  .catch((err) => {
+    // First boot ever: the users table doesn't exist yet, sync() below creates it (with googleId already).
+    if (!/no such table|does not exist/i.test(err.message)) {
+      console.error('Failed to ensure googleId column:', err);
+    }
+  })
+  .then(() => sequelize.sync())
+  .then(() => ensurePasswordChangedAtColumn())
+  .then(() => ensureAppointmentIndexes())
   .then(() => {
     server.listen(
       PORT,
@@ -585,7 +684,7 @@ sequelize
           `Lannister Care API listening on port ${PORT}`
         );
 
-        startRecoveryScheduler();
+        startRecoveryScheduler(io);
       }
     );
   })

@@ -1,11 +1,23 @@
 import { doctorService } from '../../api/services/doctor';
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { DoctorDashboardShell as DashboardShell } from '../../components/RoleDashboardShell';
-import { Alert, Panel, Badge, Button, EmptyState, LoadingState } from '../../components/ui';
+import { Alert, Panel, Badge, Button, ConfirmModal, EmptyState, LoadingState, PageHeader, StatCard } from '../../components/ui';
+import NavIcon from '../../components/NavIcon';
 import { useAuth } from '../../context/AuthContext';
 import { useRealtime } from '../../context/RealtimeContext';
 import { APPOINTMENT_REALTIME_EVENTS, RECOVERY_REALTIME_EVENTS } from '../../config/realtimeEvents';
+import { slotLabel } from '../../utils/time';
+import GlassLensFilter from '../../components/GlassLensFilter';
+
+function titleCase(value = '') {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function slotHasPassed(appointment) {
+  const at = new Date(`${appointment.date}T${appointment.time}:00`);
+  return Number.isNaN(at.getTime()) || at <= new Date();
+}
 
 function safeText(value, fallback = 'Not recorded') {
   return value === null || value === undefined || String(value).trim() === '' ? fallback : String(value);
@@ -20,40 +32,36 @@ export default function DoctorHome() {
   const [refreshing, setRefreshing] = useState(false);
   const [acknowledgingId, setAcknowledgingId] = useState('');
   const [actionMessage, setActionMessage] = useState('');
+  const [completeTarget, setCompleteTarget] = useState(null);
 
-  async function load({ background = false } = {}) {
+  const loadedOnce = useRef(false);
+
+  const load = useCallback(async ({ background = false } = {}) => {
     if (!background) setRefreshing(true);
     try {
       const res = await doctorService.getHome();
       setData(res.data);
+      loadedOnce.current = true;
       setLoadError('');
     } catch (error) {
-      if (!data) setLoadError(error?.message || 'Unable to load the doctor dashboard.');
+      if (!loadedOnce.current) setLoadError(error?.message || 'Unable to load the doctor dashboard.');
       else setActionMessage(error?.message || 'The dashboard could not be refreshed. Showing the latest available data.');
     } finally {
       if (!background) setRefreshing(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     load();
     const timer = setInterval(() => load({ background: true }), 15000);
     return () => clearInterval(timer);
-  }, []);
+  }, [load]);
 
   useEffect(() => {
-    const cleanups = APPOINTMENT_REALTIME_EVENTS.map((eventName) =>
-      subscribe(eventName, () => load({ background: true })),
-    );
+    const events = [...APPOINTMENT_REALTIME_EVENTS, ...RECOVERY_REALTIME_EVENTS];
+    const cleanups = events.map((eventName) => subscribe(eventName, () => load({ background: true })));
     return () => cleanups.forEach((cleanup) => cleanup());
-  }, [subscribe]);
-
-  useEffect(() => {
-    const cleanups = RECOVERY_REALTIME_EVENTS.map((eventName) =>
-      subscribe(eventName, () => load({ background: true })),
-    );
-    return () => cleanups.forEach((cleanup) => cleanup());
-  }, [subscribe]);
+  }, [subscribe, load]);
 
   async function acknowledge(alertId, patientId) {
     if (acknowledgingId) return;
@@ -82,6 +90,11 @@ export default function DoctorHome() {
 
   const sosCount = data?.sosAlerts?.length || 0;
   const appointmentCount = data?.todaysAppointments?.length || 0;
+  // "Dr." always leads the name, without doubling it if the name already has one.
+  const bareName = safeText(user?.name, '').replace(/^\s*dr\.?\s+/i, '').trim();
+  const doctorName = bareName ? `Dr. ${bareName}` : 'Doctor';
+  const today = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  const reviewCount = data?.needsReview?.length || 0;
   const completedToday = useMemo(
     () => data?.todaysAppointments?.filter((appointment) => appointment.status === 'completed').length || 0,
     [data],
@@ -89,26 +102,19 @@ export default function DoctorHome() {
 
   return (
     <DashboardShell>
-      <div className="flex flex-wrap items-start justify-between gap-4 mb-8">
-        <div>
-          <p className="eyebrow mb-2">Doctor command centre</p>
-          <h1 className="font-display text-3xl text-[var(--color-ink)] mb-1">Welcome, {safeText(user?.name, 'Doctor')}</h1>
-          <p className="text-[var(--color-text-soft)]">Here is what needs your attention today.</p>
-        </div>
-        <Button variant="outline" onClick={() => load()} disabled={refreshing}>
-          {refreshing ? 'Refreshing…' : 'Refresh dashboard'}
-        </Button>
-      </div>
+      <div className="doctor-home-page">
+      <GlassLensFilter />
+      <PageHeader title={`Welcome, ${doctorName}`} subtitle={today} />
 
       {actionMessage && (
         <div className="mb-6" role="status" aria-live="polite">
-          <Alert tone="neutral" title="Dashboard update">{actionMessage}</Alert>
+          <Alert variant="ink" title="Dashboard update">{actionMessage}</Alert>
         </div>
       )}
 
       {loadError && !data ? (
         <Panel title="Dashboard unavailable" className="mb-6">
-          <Alert tone="danger" title="Unable to load your dashboard">{loadError}</Alert>
+          <Alert variant="danger" title="Unable to load your dashboard">{loadError}</Alert>
           <div className="mt-4">
             <Button variant="primary" onClick={() => load()} disabled={refreshing}>
               {refreshing ? 'Retrying…' : 'Retry'}
@@ -116,25 +122,21 @@ export default function DoctorHome() {
           </div>
         </Panel>
       ) : !data ? (
-        <LoadingState title="Loading your clinical dashboard" subtitle="Checking urgent alerts and today’s appointments." />
+        <LoadingState label="Loading your clinical dashboard…" rows={4} />
       ) : (
         <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="stat-card">
-              <span className="stat-card__label">Urgent SOS</span>
-              <strong className="stat-card__value">{sosCount}</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Today’s appointments</span>
-              <strong className="stat-card__value">{appointmentCount}</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Completed today</span>
-              <strong className="stat-card__value">{completedToday}</strong>
-            </div>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+            <StatCard
+              label="Urgent SOS"
+              icon={<NavIcon name="alert" size={44} />}
+              value={sosCount}
+              accent={sosCount > 0 ? 'danger' : 'crimson'}
+            />
+            <StatCard label="Today’s appointments" icon={<NavIcon name="calendar" size={44} />} value={appointmentCount} accent="gold" />
+            <StatCard className="col-span-2 lg:col-span-1" label="Completed today" icon={<NavIcon name="check" size={44} />} value={completedToday} accent="forest" />
           </div>
 
-          <Panel title="Emergency SOS" description="Urgent patient alerts requiring acknowledgement are shown here first.">
+          <Panel title="Emergency SOS">
             {sosCount === 0 ? (
               <EmptyState title="No active emergencies" subtitle="You’ll see patient SOS alerts here the moment they come in." />
             ) : (
@@ -146,11 +148,10 @@ export default function DoctorHome() {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2 mb-1">
                           <Badge variant="critical">Urgent SOS</Badge>
-                          <span className="text-xs text-[var(--color-text-soft)]">Immediate doctor acknowledgement</span>
                         </div>
                         <p className="font-semibold text-[var(--color-ink)]">{safeText(alert.patientName)}</p>
                         <p className="text-sm text-[var(--color-text-soft)]">
-                          Surgery: {safeText(alert.surgery)} · Blood group: {safeText(alert.bloodGroup)}
+                          {[alert.surgery, alert.bloodGroup ? `Blood group ${alert.bloodGroup}` : ''].filter(Boolean).join(' · ') || 'Details not recorded'}
                         </p>
                       </div>
                       <Button
@@ -168,42 +169,71 @@ export default function DoctorHome() {
             )}
           </Panel>
 
-          <Panel title="Today’s Appointments" description="Scheduled visits for the current day.">
-            {data.todaysAppointments.length === 0 ? (
-              <EmptyState title="No appointments scheduled for today" subtitle="Your schedule is clear for now." />
-            ) : (
+          {reviewCount > 0 ? (
+            <Panel title="Needs clinical review">
               <div className="space-y-3">
-                {data.todaysAppointments.map((appointment) => (
-                  <article key={appointment.id} className="flex flex-col gap-4 rounded-md border border-[var(--color-line)] p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 items-start gap-4">
-                      <Badge variant="gold">{safeText(appointment.time)}</Badge>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-[var(--color-ink)]">{safeText(appointment.patientName)}</p>
-                        <p className="text-sm text-[var(--color-text-soft)]">
-                          Surgery: {safeText(appointment.surgery)} · Blood group: {safeText(appointment.bloodGroup)}
-                        </p>
-                        <p className="mt-1 text-sm text-[var(--color-text-soft)]">
-                          {safeText(appointment.visitCategory)} · {safeText(appointment.serviceType)}
-                        </p>
-                      </div>
+                {data.needsReview.map((item) => (
+                  <article key={item.patientId} className="flex flex-col gap-3 rounded-md border border-[var(--color-line)] p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-[var(--color-ink)]">{safeText(item.patientName)}</p>
+                      <p className="text-sm text-[var(--color-text-soft)]">
+                        {safeText(item.surgery)} · {safeText(item.trendLabel)}
+                      </p>
                     </div>
-                    <div className="flex flex-wrap gap-2 sm:justify-end">
-                      <Button variant="outline" onClick={() => navigate(`/doctor/patients/${appointment.patientId}`)}>Patient details</Button>
-                      <Button
-                        variant="gold"
-                        onClick={() => completeAppt(appointment.id)}
-                        disabled={appointment.status === 'completed'}
-                      >
-                        {appointment.status === 'completed' ? 'Completed' : 'Appointment completed'}
-                      </Button>
-                    </div>
+                    <Button variant="outline" onClick={() => navigate(`/doctor/patients/${item.patientId}`)}>Open patient</Button>
                   </article>
                 ))}
               </div>
+            </Panel>
+          ) : null}
+
+          <Panel title="Today’s appointments" action={<Link to="/doctor/appointments" className="admin-link">View all</Link>}>
+            {data.todaysAppointments.length === 0 ? (
+              <EmptyState title="No appointments today" subtitle="Your schedule is clear for now." />
+            ) : (
+              <ul className="appt-rows">
+                {data.todaysAppointments.map((appointment) => {
+                  const passed = slotHasPassed(appointment);
+                  return (
+                    <li key={appointment.id} className="appt-row">
+                      <div className="appt-time">{slotLabel(appointment.time)}</div>
+                      <div className="appt-info">
+                        <Link to={`/doctor/patients/${appointment.patientId}`} className="appt-patient">{safeText(appointment.patientName, 'Patient')}</Link>
+                        <p className="appt-meta">
+                          {[appointment.surgery, titleCase(safeText(appointment.visitCategory, '')), titleCase(safeText(appointment.serviceType, ''))].filter(Boolean).join(' · ')}
+                        </p>
+                      </div>
+                      <div className="appt-actions">
+                        {appointment.status === 'completed' ? (
+                          <Badge variant="forest">Completed</Badge>
+                        ) : (
+                          <>
+                            <Button variant="primary" size="sm" onClick={() => setCompleteTarget(appointment)} disabled={!passed}>Mark completed</Button>
+                            {!passed ? <span className="appt-hint">Available after {slotLabel(appointment.time)}</span> : null}
+                          </>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </Panel>
         </div>
       )}
+      </div>
+
+      <ConfirmModal
+        open={!!completeTarget}
+        tone="info"
+        variant="primary"
+        eyebrow="Mark completed"
+        title="Mark this appointment completed?"
+        body={completeTarget ? `${safeText(completeTarget.patientName, 'This patient')}'s ${titleCase(safeText(completeTarget.serviceType, ''))} at ${slotLabel(completeTarget.time)} will be marked completed.` : ''}
+        confirmLabel="Mark completed"
+        onConfirm={async () => { const id = completeTarget.id; setCompleteTarget(null); await completeAppt(id); }}
+        onCancel={() => setCompleteTarget(null)}
+      />
     </DashboardShell>
   );
 }

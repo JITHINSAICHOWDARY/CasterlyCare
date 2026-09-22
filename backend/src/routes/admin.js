@@ -18,6 +18,10 @@ const {
   AppointmentSlot,
 } = require('../models');
 
+const { normalizePhone, isValidPhone } = require('../utils/phone');
+const { todayInAppTz } = require('../utils/dates');
+const { respondIfSlotTaken } = require('../utils/conflicts');
+
 const {
   generateUniqueDoctorId,
 } = require('../utils/idGenerator');
@@ -265,7 +269,9 @@ router.post(
         nullable:
           true,
       })
-      .trim(),
+      .trim()
+      .custom((value) => !value || isValidPhone(value))
+      .withMessage('Enter a valid 10-digit mobile number.'),
 
     body('specialization')
       .optional({
@@ -300,10 +306,12 @@ router.post(
         name,
         email,
         password,
-        phone = null,
+        phone: rawPhone = null,
         specialization = null,
         bio = null,
       } = req.body;
+
+      const phone = rawPhone ? normalizePhone(rawPhone) : null;
 
       const normalizedEmail =
         String(email)
@@ -923,6 +931,18 @@ router.patch(
         });
       }
 
+      if (
+        appointment.status ===
+          'completed' ||
+        appointment.status ===
+          'cancelled'
+      ) {
+        return res.status(409).json({
+          message:
+            'Completed or cancelled appointments cannot be rescheduled.',
+        });
+      }
+
       const clash =
         await Appointment.findOne({
           where: {
@@ -1062,6 +1082,8 @@ router.patch(
         },
       });
     } catch (error) {
+      if (respondIfSlotTaken(error, res)) return;
+
       console.error(
         'PATCH /admin/appointments/:id/reschedule error:',
         error
@@ -1512,18 +1534,31 @@ router.patch(
    ========================================================= */
 
 /*
- * These are hospital-wide recurring times of day (e.g. "09:00",
- * "09:15" ...) that the admin defines once. Patients can then only
- * book into one of these times - see the patient/doctor booking
- * routes, which validate the requested time against this table
- * rather than accepting any arbitrary time typed in.
+ * Slot times are per doctor and per date: the admin publishes the
+ * exact times a given doctor can be booked on a given day, and
+ * patients can only book into those (see the patient booking
+ * routes, which validate the requested doctor/date/time against
+ * this table).
  */
+
+const SLOT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SLOT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 
 router.get(
   '/slot-times',
   async (req, res) => {
     try {
+      const { doctorId, date } = req.query;
+
+      if (!doctorId || !SLOT_DATE_RE.test(date || '')) {
+        return res.status(400).json({
+          error: 'A doctor and a date (YYYY-MM-DD) are required.',
+        });
+      }
+
       const slots = await AppointmentSlot.findAll({
+        where: { doctorId, date, isActive: true },
         order: [['time', 'ASC']],
       });
 
@@ -1542,23 +1577,39 @@ router.post(
   '/slot-times',
   async (req, res) => {
     try {
-      const { time } = req.body;
+      const { doctorId, date, time } = req.body;
       const normalizedTime = typeof time === 'string' ? time.trim() : '';
 
-      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(normalizedTime)) {
+      if (!SLOT_TIME_RE.test(normalizedTime)) {
         return res.status(400).json({
           error: 'Time must be in 24-hour HH:MM format, e.g. 09:15.',
         });
       }
 
+      if (!SLOT_DATE_RE.test(date || '') || date < todayInAppTz()) {
+        return res.status(400).json({
+          error: 'Choose today or a future date.',
+        });
+      }
+
+      const doctor = doctorId
+        ? await User.findOne({ where: { id: doctorId, role: 'doctor' } })
+        : null;
+
+      if (!doctor) {
+        return res.status(404).json({
+          error: 'Doctor not found.',
+        });
+      }
+
       const existing = await AppointmentSlot.findOne({
-        where: { time: normalizedTime },
+        where: { doctorId, date, time: normalizedTime },
       });
 
       if (existing) {
         if (existing.isActive) {
           return res.status(409).json({
-            error: 'That time slot already exists.',
+            error: 'That slot already exists for this doctor on this day.',
           });
         }
 
@@ -1569,6 +1620,8 @@ router.post(
       }
 
       const slot = await AppointmentSlot.create({
+        doctorId,
+        date,
         time: normalizedTime,
         isActive: true,
       });
@@ -1598,9 +1651,9 @@ router.delete(
 
       /*
        * Soft-delete (deactivate) rather than hard-delete: existing
-       * appointments that were booked into this time in the past
-       * should not become orphaned or unexplainable in historical
-       * records just because the admin later retired the slot.
+       * appointments that were booked into this time should not
+       * become unexplainable in historical records just because
+       * the admin later retired the slot.
        */
       slot.isActive = false;
       await slot.save();

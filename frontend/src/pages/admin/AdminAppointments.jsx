@@ -1,4 +1,5 @@
 // Phase 2.12.3 — Admin Master Appointment Calendar & Clash Resolution UX
+import NavIcon from '../../components/NavIcon';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { adminService } from '../../api/services/admin';
 import { AdminDashboardShell as DashboardShell } from '../../components/RoleDashboardShell';
@@ -13,17 +14,11 @@ import {
   PageHeader,
   Panel,
   SectionHeading,
+  StatCard,
 } from '../../components/ui';
 import { apiErrorMessage } from '../../api/client';
 import { useRealtime } from '../../context/RealtimeContext';
 import { APPOINTMENT_REALTIME_EVENTS } from '../../config/realtimeEvents';
-
-function parseTimestamp(appointment) {
-  const raw = `${appointment?.date || ''}T${appointment?.time || '00:00'}`;
-  const value = new Date(raw);
-
-  return Number.isNaN(value.getTime()) ? null : value;
-}
 
 function formatDate(value) {
   const date = new Date(`${value}T00:00:00`);
@@ -109,6 +104,29 @@ function normalizeAppointments(value) {
   }));
 }
 
+const STATUS_FILTERS = [
+  { value: 'upcoming', label: 'Upcoming' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+// Display only: 'home_visit' -> 'Home visit'. Never used for comparisons.
+function humanize(value) {
+  if (!value || typeof value !== 'string') return value;
+  const spaced = value.replace(/_/g, ' ').trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function dayParts(date) {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return { weekday: '', day: '', month: date };
+  return {
+    weekday: parsed.toLocaleDateString([], { weekday: 'short' }),
+    day: parsed.getDate(),
+    month: parsed.toLocaleDateString([], { month: 'short', year: 'numeric' }),
+  };
+}
+
 function statusVariant(appointment) {
   if (appointment?.isClash) return 'danger';
   if (appointment?.status === 'completed') return 'forest';
@@ -140,17 +158,51 @@ function formatSlotTimeLabel(time24) {
   return `${hour}:${minute} ${period}`;
 }
 
+function todayISO() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
 function SlotTimesPanel() {
+  const [doctors, setDoctors] = useState([]);
+  const [doctorId, setDoctorId] = useState('');
+  const [date, setDate] = useState(todayISO);
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [newTime, setNewTime] = useState('9:00 AM');
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    adminService
+      .getDoctors()
+      .then((res) => {
+        const data = res?.data;
+        const list = Array.isArray(data) ? data : Array.isArray(data?.doctors) ? data.doctors : [];
+        const active = list.filter((doctor) => doctor?.isActive !== false);
+        if (cancelled) return;
+        setDoctors(active);
+        setDoctorId((current) => current || active[0]?.id || '');
+        if (!active.length) setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(apiErrorMessage(err));
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const load = useCallback(async () => {
+    if (!doctorId || !date) return;
     setError('');
+    setLoading(true);
     try {
-      const res = await adminService.getSlotTimes();
+      const res = await adminService.getSlotTimes(doctorId, date);
       const list = Array.isArray(res?.data?.slots) ? res.data.slots : [];
       setSlots(list.filter((slot) => slot.isActive !== false));
     } catch (err) {
@@ -158,7 +210,7 @@ function SlotTimesPanel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [doctorId, date]);
 
   useEffect(() => {
     load();
@@ -174,7 +226,7 @@ function SlotTimesPanel() {
     setSaving(true);
     setError('');
     try {
-      await adminService.addSlotTime(time24);
+      await adminService.addSlotTime(doctorId, date, time24);
       await load();
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -193,19 +245,57 @@ function SlotTimesPanel() {
     }
   }
 
+  const doctorName = doctors.find((doctor) => doctor.id === doctorId)?.name || 'this doctor';
+
+  if (!loading && doctors.length === 0 && !error) {
+    return (
+      <div className="admin-slot-body">
+        <EmptyState title="No active doctors" subtitle="Add a doctor first, then publish their appointment times here." />
+      </div>
+    );
+  }
+
   return (
-    <Panel
-      title="Appointment slot times"
-      subtitle="These fixed times of day are the only ones patients can choose from when booking. Add or remove slots here to control how many appointments can be scheduled and when."
-      className="mb-6"
-    >
+    <div className="admin-slot-body">
       {error ? <Alert variant="danger" className="mb-3">{error}</Alert> : null}
+
+      <div className="flex flex-wrap items-end gap-3 mb-4">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="field-label">Doctor</span>
+          <select
+            className="field-select admin-inline-select"
+            value={doctorId}
+            onChange={(event) => setDoctorId(event.target.value)}
+          >
+            {doctors.map((doctor) => (
+              <option key={doctor.id} value={doctor.id}>
+                {doctor.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="field-label">Day</span>
+          <input
+            type="date"
+            className="field-input"
+            value={date}
+            min={todayISO()}
+            onChange={(event) => setDate(event.target.value)}
+          />
+        </label>
+      </div>
+
       {loading ? (
         <LoadingState label="Loading slot times…" />
       ) : (
         <>
           {slots.length === 0 ? (
-            <EmptyState title="No slot times configured yet" subtitle="Add at least one time below so patients have something to book into." />
+            <EmptyState
+              title={`No times for ${doctorName} on this day`}
+              subtitle="Patients of this doctor can't book this day until you add times below."
+            />
           ) : (
             <div className="flex flex-wrap gap-2 mb-4">
               {slots.map((slot) => (
@@ -225,26 +315,25 @@ function SlotTimesPanel() {
           )}
           <form onSubmit={addSlot} className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-sm">
-              <span className="field-label">Add a new slot time</span>
+              <span className="field-label">Add a time</span>
               <AlarmTimePicker value={newTime} onChange={setNewTime} />
             </label>
-            <Button type="submit" variant="primary" loading={saving}>+ Add slot</Button>
+            <Button type="submit" variant="primary" loading={saving} disabled={!doctorId || !date}>Add slot</Button>
           </form>
         </>
       )}
-    </Panel>
+    </div>
   );
 }
 
 export default function AdminAppointments() {
   const [appointments, setAppointments] = useState(null);
   const [selectedDate, setSelectedDate] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('upcoming');
   const [doctorFilter, setDoctorFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
   const { subscribe } = useRealtime();
@@ -253,11 +342,7 @@ export default function AdminAppointments() {
     async ({ background = false } = {}) => {
       setError('');
 
-      if (background) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      if (!background) setLoading(true);
 
       try {
         const res = await adminService.getAppointments();
@@ -266,27 +351,13 @@ export default function AdminAppointments() {
 
         setAppointments(normalized);
 
-        if (!selectedDate && normalized.length) {
-          const upcoming = normalized.find(
-            (item) =>
-              item?.status === 'upcoming' &&
-              parseTimestamp(item),
-          );
-
-          setSelectedDate(
-            upcoming?.date ||
-              normalized[0]?.date ||
-              '',
-          );
-        }
       } catch (err) {
         setError(apiErrorMessage(err));
       } finally {
         setLoading(false);
-        setRefreshing(false);
       }
     },
-    [selectedDate],
+    [],
   );
 
   useEffect(() => {
@@ -333,31 +404,37 @@ export default function AdminAppointments() {
     [appointments],
   );
 
-  const dates = useMemo(() => {
-    const list = Array.from(
-      new Set(
-        (appointments || [])
-          .map((item) => item?.date)
-          .filter(Boolean),
+  // The calendar only lists days that have appointments for the chosen status
+  // and doctor, so a completed day never shows up under "Upcoming".
+  const forCalendar = useMemo(
+    () =>
+      (appointments || []).filter(
+        (item) =>
+          item?.status === statusFilter &&
+          (doctorFilter === 'all' || item?.doctorName === doctorFilter),
       ),
-    );
+    [appointments, statusFilter, doctorFilter],
+  );
 
-    return list.sort();
-  }, [appointments]);
+  const dates = useMemo(
+    () => Array.from(new Set(forCalendar.map((item) => item?.date).filter(Boolean))).sort(),
+    [forCalendar],
+  );
+
+  const today = todayISO();
+  const activeDate = dates.includes(selectedDate)
+    ? selectedDate
+    : dates.find((date) => date >= today) || dates[0] || '';
 
   const visible = useMemo(
     () =>
       (appointments || [])
         .filter(
           (item) =>
-            !selectedDate ||
-            item?.date === selectedDate,
+            !activeDate ||
+            item?.date === activeDate,
         )
-        .filter(
-          (item) =>
-            statusFilter === 'all' ||
-            item?.status === statusFilter,
-        )
+        .filter((item) => item?.status === statusFilter)
         .filter(
           (item) =>
             doctorFilter === 'all' ||
@@ -388,7 +465,7 @@ export default function AdminAppointments() {
         ),
     [
       appointments,
-      selectedDate,
+      activeDate,
       statusFilter,
       doctorFilter,
       query,
@@ -403,23 +480,9 @@ export default function AdminAppointments() {
     <DashboardShell>
       <div className="admin-appointments-page">
         <PageHeader
-          eyebrow="Facility scheduling"
           title="Master Appointment Calendar"
-          subtitle="Review every appointment, identify schedule clashes, and move conflicting bookings to a free slot while keeping the hospital schedule coherent."
-          action={(
-            <Button
-              variant="outline"
-              onClick={() =>
-                load({ background: true })
-              }
-              loading={refreshing}
-            >
-              Refresh calendar
-            </Button>
-          )}
+          subtitle="Review every appointment, spot schedule clashes, and move conflicting bookings to a free slot."
         />
-
-        <SlotTimesPanel />
 
         {error ? (
           <div
@@ -439,38 +502,41 @@ export default function AdminAppointments() {
           <LoadingState label="Loading the master appointment calendar…" />
         ) : (
           <>
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-              <CalendarStat
-                label="All appointments"
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+              <StatCard
+                label="All appointments" icon={<NavIcon name={'calendar'} size={44} />}
                 value={appointments?.length || 0}
                 detail="Facility-wide schedule"
+                accent="crimson"
               />
 
-              <CalendarStat
-                label="Upcoming"
+              <StatCard
+                label="Upcoming" icon={<NavIcon name={'clock'} size={44} />}
                 value={upcomingCount}
                 detail="Appointments still scheduled"
+                accent="gold"
               />
 
-              <CalendarStat
-                label="Clashes"
+              <StatCard
+                label="Clashes" icon={<NavIcon name={clashCount > 0 ? 'alert' : 'check'} size={44} />}
                 value={clashCount}
                 detail={
                   clashCount
                     ? 'Requires review'
                     : 'No conflicts detected'
                 }
-                critical={clashCount > 0}
+                accent={clashCount > 0 ? 'danger' : 'forest'}
               />
 
-              <CalendarStat
-                label="Visible now"
+              <StatCard
+                label="Visible now" icon={<NavIcon name={'search'} size={44} />}
                 value={visible.length}
                 detail="Matches current filters"
+                accent="sand"
               />
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-6">
+            <div className="grid grid-cols-1 xl:grid-cols-[240px_minmax(0,1fr)] gap-5">
               <Panel
                 title="Calendar"
                 subtitle="Choose an appointment day."
@@ -481,51 +547,64 @@ export default function AdminAppointments() {
                 >
                   {dates.length === 0 ? (
                     <EmptyState
-                      title="No dates available"
-                      subtitle="Appointments will appear here once scheduled."
+                      title="No days to show"
+                      subtitle={`There are no ${statusFilter} appointments.`}
                     />
                   ) : (
-                    dates.map((date) => (
-                      <button
-                        type="button"
-                        key={date}
-                        className={`w-full text-left rounded-xl border px-3 py-3 transition ${
-                          selectedDate === date
-                            ? 'border-[var(--color-gold)] bg-[var(--color-gold-soft)]'
-                            : 'border-[var(--color-line)] hover:border-[var(--color-gold)]'
-                        }`}
-                        onClick={() =>
-                          setSelectedDate(date)
-                        }
-                        aria-pressed={
-                          selectedDate === date
-                        }
-                      >
-                        <span className="block text-sm font-semibold text-[var(--color-ink)]">
-                          {formatDate(date)}
-                        </span>
+                    dates.map((date) => {
+                      const parts = dayParts(date);
+                      const dayCount = forCalendar.filter(
+                        (item) => item?.date === date,
+                      ).length;
+                      const hasClash = forCalendar.some(
+                        (item) => item?.date === date && item?.isClash,
+                      );
 
-                        <span className="block text-xs text-[var(--color-text-soft)] mt-1">
-                          {
-                            appointments.filter(
-                              (item) =>
-                                item?.date === date,
-                            ).length
-                          }{' '}
-                          appointment(s)
-                        </span>
-                      </button>
-                    ))
+                      return (
+                        <button
+                          type="button"
+                          key={date}
+                          className={`admin-day ${
+                            activeDate === date ? 'is-active' : ''
+                          }`}
+                          onClick={() =>
+                            setSelectedDate(date)
+                          }
+                          aria-pressed={
+                            activeDate === date
+                          }
+                        >
+                          <span className="admin-day-block" aria-hidden="true">
+                            <span>{parts.weekday}</span>
+                            <strong>{parts.day}</strong>
+                          </span>
+
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-[var(--color-ink)]">
+                              {formatDate(date)}
+                            </span>
+
+                            <span className="block text-xs text-[var(--color-text-soft)] mt-0.5">
+                              {dayCount} appointment{dayCount === 1 ? '' : 's'}
+                            </span>
+                          </span>
+
+                          {hasClash ? (
+                            <span className="admin-day-clash" role="img" aria-label="Has a schedule clash" />
+                          ) : null}
+                        </button>
+                      );
+                    })
                   )}
                 </div>
               </Panel>
 
               <div className="space-y-6">
                 <Panel>
-                  <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_0.7fr_0.7fr] gap-4">
-                    <div>
+                  <div className="admin-toolbar">
+                    <div className="admin-search">
                       <label
-                        className="field-label"
+                        className="sr-only"
                         htmlFor="appointment-search"
                       >
                         Search schedule
@@ -538,78 +617,56 @@ export default function AdminAppointments() {
                         onChange={(event) =>
                           setQuery(event.target.value)
                         }
-                        placeholder="Patient, doctor, surgery, or service"
+                        placeholder="Search patient, doctor, surgery"
                       />
                     </div>
 
-                    <div>
-                      <label
-                        className="field-label"
-                        htmlFor="appointment-status"
-                      >
-                        Status
-                      </label>
-
-                      <select
-                        id="appointment-status"
-                        className="field-input"
-                        value={statusFilter}
-                        onChange={(event) =>
-                          setStatusFilter(
-                            event.target.value,
-                          )
-                        }
-                      >
-                        <option value="all">
-                          All statuses
-                        </option>
-
-                        <option value="upcoming">
-                          Upcoming
-                        </option>
-
-                        <option value="completed">
-                          Completed
-                        </option>
-
-                        <option value="cancelled">
-                          Cancelled
-                        </option>
-                      </select>
+                    <div
+                      className="admin-chips"
+                      role="group"
+                      aria-label="Filter by status"
+                    >
+                      {STATUS_FILTERS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`admin-chip ${
+                            statusFilter === option.value
+                              ? 'is-active'
+                              : ''
+                          }`}
+                          aria-pressed={statusFilter === option.value}
+                          onClick={() =>
+                            setStatusFilter(option.value)
+                          }
+                        >
+                          {option.label}
+                        </button>
+                      ))}
                     </div>
 
-                    <div>
-                      <label
-                        className="field-label"
-                        htmlFor="appointment-doctor"
-                      >
-                        Doctor
-                      </label>
+                    <select
+                      id="appointment-doctor"
+                      className="field-select admin-inline-select"
+                      aria-label="Filter by doctor"
+                      value={doctorFilter}
+                      onChange={(event) =>
+                        setDoctorFilter(event.target.value)
+                      }
+                    >
+                      <option value="all">
+                        All doctors
+                      </option>
 
-                      <select
-                        id="appointment-doctor"
-                        className="field-input"
-                        value={doctorFilter}
-                        onChange={(event) =>
-                          setDoctorFilter(
-                            event.target.value,
-                          )
-                        }
-                      >
-                        <option value="all">
-                          All doctors
+                      {doctors.map((doctor) => (
+                        <option
+                          key={doctor}
+                          value={doctor}
+                        >
+                          {doctor}
                         </option>
-
-                        {doctors.map((doctor) => (
-                          <option
-                            key={doctor}
-                            value={doctor}
-                          >
-                            {doctor}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                      ))}
+                    </select>
                   </div>
 
                   {clashAppointments.length ? (
@@ -633,13 +690,13 @@ export default function AdminAppointments() {
                       </Alert>
                     </div>
                   ) : null}
-                </Panel>
 
-                <Panel>
+                  <div className="admin-panel-divider" />
+
                   <SectionHeading
                     title={
-                      selectedDate
-                        ? formatDate(selectedDate)
+                      activeDate
+                        ? formatDate(activeDate)
                         : 'All scheduled appointments'
                     }
                     subtitle={`${visible.length} appointment${
@@ -655,13 +712,13 @@ export default function AdminAppointments() {
                       subtitle="Try another date, status, doctor, or search term."
                       action={
                         query ||
-                        statusFilter !== 'all' ||
+                        statusFilter !== 'upcoming' ||
                         doctorFilter !== 'all' ? (
                           <Button
                             variant="outline"
                             onClick={() => {
                               setQuery('');
-                              setStatusFilter('all');
+                              setStatusFilter('upcoming');
                               setDoctorFilter('all');
                             }}
                           >
@@ -757,12 +814,12 @@ export default function AdminAppointments() {
 
                               <td className="py-4 pr-4">
                                 <div>
-                                  {item.visitCategory ||
+                                  {humanize(item.visitCategory) ||
                                     '—'}
                                 </div>
 
                                 <div className="text-xs text-[var(--color-text-soft)]">
-                                  {item.serviceType ||
+                                  {humanize(item.serviceType) ||
                                     '—'}
                                 </div>
                               </td>
@@ -775,26 +832,28 @@ export default function AdminAppointments() {
                                 >
                                   {item.isClash
                                     ? 'Clash'
-                                    : item.status ||
+                                    : humanize(item.status) ||
                                       'Unknown'}
                                 </Badge>
                               </td>
 
                               <td className="py-4 text-right">
-                                <Button
-                                  variant={
-                                    item.isClash
-                                      ? 'danger'
-                                      : 'outline'
-                                  }
-                                  onClick={() =>
-                                    setEditing(item)
-                                  }
-                                >
-                                  {item.isClash
-                                    ? 'Resolve'
-                                    : 'Reschedule'}
-                                </Button>
+                                {item.status === 'upcoming' ? (
+                                  <Button
+                                    variant={
+                                      item.isClash
+                                        ? 'danger'
+                                        : 'outline'
+                                    }
+                                    onClick={() =>
+                                      setEditing(item)
+                                    }
+                                  >
+                                    {item.isClash
+                                      ? 'Resolve'
+                                      : 'Reschedule'}
+                                  </Button>
+                                ) : null}
                               </td>
                             </tr>
                           ))}
@@ -808,6 +867,23 @@ export default function AdminAppointments() {
           </>
         )}
 
+        <details className="admin-disclosure panel">
+          <summary>
+            <span className="admin-disclosure-title">Appointment slot times</span>
+            <span className="admin-disclosure-hint">
+              The times patients can book — set per doctor, per day
+            </span>
+          </summary>
+
+          <div className="admin-disclosure-body">
+            <p className="admin-disclosure-note">
+              Pick a doctor and a day, then add the times patients can book with that doctor on that day only. A day with no times can't be booked.
+            </p>
+
+            <SlotTimesPanel />
+          </div>
+        </details>
+
         <RescheduleModal
           appt={editing}
           onClose={() => setEditing(null)}
@@ -818,35 +894,6 @@ export default function AdminAppointments() {
         />
       </div>
     </DashboardShell>
-  );
-}
-
-function CalendarStat({
-  label,
-  value,
-  detail,
-  critical = false,
-}) {
-  return (
-    <div className="panel p-4">
-      <div className="text-xs uppercase tracking-[0.14em] text-[var(--color-text-soft)]">
-        {label}
-      </div>
-
-      <div
-        className={`mt-2 font-display text-3xl ${
-          critical
-            ? 'text-[var(--color-danger)]'
-            : 'text-[var(--color-ink)]'
-        }`}
-      >
-        {value}
-      </div>
-
-      <div className="mt-1 text-xs text-[var(--color-muted)]">
-        {detail}
-      </div>
-    </div>
   );
 }
 

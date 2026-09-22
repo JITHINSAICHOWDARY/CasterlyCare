@@ -55,6 +55,28 @@ export function AuthProvider({ children }) {
     }
   }, [establishSession]);
 
+  const requestOtp = useCallback((phone) => authService.requestOtp(phone.trim()), []);
+
+  const loginWithOtp = useCallback(async (phone, code) => {
+    setBusy(true);
+    try {
+      const res = await authService.verifyOtp(phone.trim(), code.trim());
+      return establishSession(res.data);
+    } finally {
+      setBusy(false);
+    }
+  }, [establishSession]);
+
+  const loginWithGoogle = useCallback(async (credential) => {
+    setBusy(true);
+    try {
+      const res = await authService.google(credential);
+      return establishSession(res.data);
+    } finally {
+      setBusy(false);
+    }
+  }, [establishSession]);
+
   const signup = useCallback(async (payload) => {
     setBusy(true);
     try {
@@ -65,8 +87,6 @@ export function AuthProvider({ children }) {
         phone: payload.phone?.trim(),
         address: payload.address?.trim(),
         doctorUniqueId: payload.doctorUniqueId?.trim().toUpperCase(),
-        surgeryName: payload.surgeryName?.trim(),
-        recoveryTotalDays: Number(payload.recoveryTotalDays),
       };
       const res = await authService.signup(normalized);
       return establishSession(res.data);
@@ -95,10 +115,13 @@ export function AuthProvider({ children }) {
     loading: initializing || busy,
     busy,
     login,
+    requestOtp,
+    loginWithOtp,
+    loginWithGoogle,
     signup,
     logout,
     updateUserLocal,
-  }), [user, initializing, busy, login, signup, logout, updateUserLocal]);
+  }), [user, initializing, busy, login, requestOtp, loginWithOtp, loginWithGoogle, signup, logout, updateUserLocal]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

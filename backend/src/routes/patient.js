@@ -1,6 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 const { Op } = require('sequelize');
 
 const sequelize = require('../config/db');
@@ -42,9 +44,15 @@ const {
   notifyPatientAndDoctor,
 } = require('../utils/realtime');
 
+const { normalizePhone, isValidPhone } = require('../utils/phone');
+const { respondIfSlotTaken } = require('../utils/conflicts');
+
 const {
   computeRecovery,
+  normalizeRecoveryDays,
 } = require('../utils/recovery');
+
+const { todayInAppTz, isRealDate } = require('../utils/dates');
 
 const {
   kingslayerReply,
@@ -105,28 +113,6 @@ function isValidDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(
     String(value || '')
   );
-}
-
-function normalizeRecoveryDays(value) {
-  if (
-    value === undefined ||
-    value === null ||
-    value === ''
-  ) {
-    return 14;
-  }
-
-  const days = Number(value);
-
-  if (
-    !Number.isInteger(days) ||
-    days < 1 ||
-    days > 365
-  ) {
-    return null;
-  }
-
-  return days;
 }
 
 function isValidTime(value) {
@@ -331,6 +317,11 @@ router.get(
                 surgeryId:
                   episode.surgeryId,
 
+                surgeryName:
+                  episode.surgery
+                    ?.surgeryName ||
+                  null,
+
                 status:
                   episode.status,
 
@@ -424,13 +415,15 @@ router.post(
 
         return res.status(409).json({
           error:
-            'You already have an active recovery episode. Discharge is required before starting a new one.',
+            'You already have an active recovery episode. It must finish before you can start a new one.',
         });
       }
 
       const {
         doctorUniqueId,
+        specialization,
         surgeryName,
+        surgeryDate,
         recoveryTotalDays,
       } = req.body;
 
@@ -442,10 +435,22 @@ router.post(
               .toUpperCase()
           : '';
 
+      const normalizedSpecialization =
+        typeof specialization ===
+        'string'
+          ? specialization.trim()
+          : '';
+
       const normalizedSurgeryName =
         typeof surgeryName ===
         'string'
           ? surgeryName.trim()
+          : '';
+
+      const normalizedSurgeryDate =
+        typeof surgeryDate ===
+        'string'
+          ? surgeryDate.trim()
           : '';
 
       if (!normalizedDoctorId) {
@@ -457,12 +462,42 @@ router.post(
         });
       }
 
+      if (!normalizedSpecialization) {
+        await transaction.rollback();
+
+        return res.status(400).json({
+          error:
+            'Surgeon specialization is required.',
+        });
+      }
+
       if (!normalizedSurgeryName) {
         await transaction.rollback();
 
         return res.status(400).json({
           error:
             'Surgery name is required.',
+        });
+      }
+
+      if (
+        !normalizedSurgeryDate ||
+        !isRealDate(normalizedSurgeryDate)
+      ) {
+        await transaction.rollback();
+
+        return res.status(400).json({
+          error:
+            'A valid date of surgery is required.',
+        });
+      }
+
+      if (normalizedSurgeryDate > todayInAppTz()) {
+        await transaction.rollback();
+
+        return res.status(400).json({
+          error:
+            'Date of surgery cannot be in the future.',
         });
       }
 
@@ -497,6 +532,19 @@ router.post(
         });
       }
 
+      if (
+        doctorProfile.specialization &&
+        doctorProfile.specialization.toLowerCase() !==
+          normalizedSpecialization.toLowerCase()
+      ) {
+        await transaction.rollback();
+
+        return res.status(400).json({
+          error:
+            'The selected specialization does not match this Doctor ID.',
+        });
+      }
+
       const doctor =
         await User.findOne({
           where: {
@@ -515,6 +563,12 @@ router.post(
         });
       }
 
+      const initialRecovery =
+        computeRecovery(
+          normalizedSurgeryDate,
+          recoveryDays
+        );
+
       const surgery =
         await Surgery.create(
           {
@@ -531,12 +585,10 @@ router.post(
               recoveryDays,
 
             recoveryDaysRemaining:
-              recoveryDays,
+              initialRecovery.daysRemaining,
 
             startDate:
-              new Date()
-                .toISOString()
-                .slice(0, 10),
+              normalizedSurgeryDate,
 
             status: 'active',
           },
@@ -564,7 +616,7 @@ router.post(
               recoveryDays,
 
             daysRemaining:
-              recoveryDays,
+              initialRecovery.daysRemaining,
           },
           { transaction }
         );
@@ -632,6 +684,48 @@ router.post(
       return res.status(500).json({
         error:
           'Unable to start a new recovery episode.',
+      });
+    }
+  }
+);
+
+router.get(
+  '/doctor-specializations',
+  async (req, res) => {
+    try {
+      const doctors =
+        await User.findAll({
+          where: {
+            role: 'doctor',
+            isActive: true,
+          },
+          include: [
+            {
+              model: DoctorProfile,
+              as: 'doctorProfile',
+              attributes: ['specialization'],
+            },
+          ],
+        });
+
+      const specializations = [
+        ...new Set(
+          doctors
+            .map((doctor) => doctor.doctorProfile?.specialization)
+            .filter(Boolean)
+        ),
+      ].sort();
+
+      return res.json({ specializations });
+    } catch (error) {
+      console.error(
+        'GET /patient/doctor-specializations error:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          'Unable to load surgeon specializations.',
       });
     }
   }
@@ -883,12 +977,13 @@ router.get(
 
       const doctorIds = [
         ...new Set(
-          surgeries
-            .map(
+          [
+            ...surgeries.map(
               (surgery) =>
                 surgery.doctorId
-            )
-            .filter(Boolean)
+            ),
+            activeEpisode?.doctorId,
+          ].filter(Boolean)
         ),
       ];
 
@@ -899,8 +994,32 @@ router.get(
                 id:
                   doctorIds,
               },
+              include: [
+                {
+                  model: DoctorProfile,
+                  as: 'doctorProfile',
+                },
+              ],
             })
           : [];
+
+      const activeSurgery =
+        activeEpisode
+          ? surgeries.find(
+              (surgery) =>
+                surgery.id ===
+                activeEpisode.surgeryId
+            )
+          : null;
+
+      const activeDoctor =
+        activeEpisode
+          ? doctors.find(
+              (doctor) =>
+                doctor.id ===
+                activeEpisode.doctorId
+            )
+          : null;
 
       res.json({
         name:
@@ -969,6 +1088,21 @@ router.get(
                     activeEpisode
                       .expectedRecoveryDays
                   ).daysRemaining,
+
+                surgeryName:
+                  activeSurgery
+                    ?.surgeryName ||
+                  null,
+
+                doctorName:
+                  activeDoctor?.name ||
+                  null,
+
+                specialization:
+                  activeDoctor
+                    ?.doctorProfile
+                    ?.specialization ||
+                  null,
               }
             : null,
 
@@ -1095,8 +1229,16 @@ router.put(
       if (
         phone !== undefined
       ) {
-        user.phone =
-          phone;
+        if (phone) {
+          if (!isValidPhone(phone)) {
+            return res.status(400).json({
+              message: 'Enter a valid 10-digit mobile number.',
+            });
+          }
+          user.phone = normalizePhone(phone);
+        } else {
+          user.phone = null;
+        }
       }
 
       await user.save();
@@ -1156,6 +1298,22 @@ router.put(
   }
 );
 
+/* Delete an old profile photo file; a missing file is fine. */
+function removeStoredPhoto(photoUrl) {
+  if (!photoUrl || !photoUrl.startsWith('/uploads/profile_photos/')) return;
+
+  const file = path.join(
+    __dirname,
+    '..',
+    '..',
+    'uploads',
+    'profile_photos',
+    path.basename(photoUrl)
+  );
+
+  fs.unlink(file, () => {});
+}
+
 router.post(
   '/profile/photo',
   uploadProfilePhoto.single(
@@ -1182,10 +1340,17 @@ router.post(
         });
       }
 
+      const previousPhoto =
+        user.photoUrl;
+
       user.photoUrl =
         `/uploads/profile_photos/${req.file.filename}`;
 
       await user.save();
+
+      removeStoredPhoto(
+        previousPhoto
+      );
 
       res.json({
         photoUrl:
@@ -1200,6 +1365,50 @@ router.post(
       res.status(500).json({
         message:
           'Failed to upload profile photo.',
+      });
+    }
+  }
+);
+
+router.delete(
+  '/profile/photo',
+  async (req, res) => {
+    try {
+      const user =
+        await User.findByPk(
+          req.user.id
+        );
+
+      if (!user) {
+        return res.status(404).json({
+          error:
+            'Patient account not found.',
+        });
+      }
+
+      const previousPhoto =
+        user.photoUrl;
+
+      user.photoUrl = null;
+
+      await user.save();
+
+      removeStoredPhoto(
+        previousPhoto
+      );
+
+      res.json({
+        photoUrl: null,
+      });
+    } catch (error) {
+      console.error(
+        'DELETE /patient/profile/photo error:',
+        error
+      );
+
+      res.status(500).json({
+        error:
+          'Unable to remove profile photo.',
       });
     }
   }
@@ -1394,8 +1603,8 @@ router.get(
    ========================================================= */
 
 /*
- * Returns the hospital's admin-defined slot times for a given
- * date, each flagged as available or already taken - "taken"
+ * Returns the slot times the admin published for the patient's own
+ * doctor on a given date, each flagged as available or already taken - "taken"
  * meaning the patient's own current doctor already has an
  * upcoming appointment at that exact date+time with someone.
  * The patient picks one of these rather than typing a free-form
@@ -1424,7 +1633,11 @@ router.get(
 
       const [slotTimes, bookedAppointments] = await Promise.all([
         AppointmentSlot.findAll({
-          where: { isActive: true },
+          where: {
+            doctorId: episode.doctorId,
+            date,
+            isActive: true,
+          },
           order: [['time', 'ASC']],
         }),
 
@@ -1636,29 +1849,6 @@ router.post(
         });
       }
 
-      /*
-       * Appointment times are fixed by the admin (see
-       * AppointmentSlot) - patients choose from that published
-       * list rather than typing an arbitrary time, and that
-       * choice is enforced server-side here too so the
-       * restriction can't be bypassed by calling the API
-       * directly.
-       */
-      const slot =
-        await AppointmentSlot.findOne({
-          where: {
-            time,
-            isActive: true,
-          },
-        });
-
-      if (!slot) {
-        return res.status(400).json({
-          error:
-            'That time is not an available appointment slot.',
-        });
-      }
-
       const episode =
         await getActiveCareEpisode(
           req.user.id
@@ -1673,6 +1863,29 @@ router.post(
 
       const doctorId =
         episode.doctorId;
+
+      /*
+       * Times are published by the admin per doctor per day (see
+       * AppointmentSlot) - patients choose from that list, and it
+       * is enforced here too so it can't be bypassed by calling
+       * the API directly.
+       */
+      const slot =
+        await AppointmentSlot.findOne({
+          where: {
+            doctorId,
+            date,
+            time,
+            isActive: true,
+          },
+        });
+
+      if (!slot) {
+        return res.status(400).json({
+          error:
+            'That time is not an available appointment slot.',
+        });
+      }
 
       const [
         patientConflict,
@@ -1747,6 +1960,8 @@ router.post(
         appointment,
       });
     } catch (error) {
+      if (respondIfSlotTaken(error, res)) return;
+
       console.error(
         'POST /patient/appointments error:',
         error
@@ -1799,21 +2014,6 @@ router.patch(
         });
       }
 
-      const slot =
-        await AppointmentSlot.findOne({
-          where: {
-            time,
-            isActive: true,
-          },
-        });
-
-      if (!slot) {
-        return res.status(400).json({
-          error:
-            'That time is not an available appointment slot.',
-        });
-      }
-
       const appointment =
         await Appointment.findOne({
           where: {
@@ -1833,6 +2033,23 @@ router.patch(
         return res.status(400).json({
           error:
             'Only upcoming appointments can be rescheduled.',
+        });
+      }
+
+      const slot =
+        await AppointmentSlot.findOne({
+          where: {
+            doctorId: appointment.doctorId,
+            date,
+            time,
+            isActive: true,
+          },
+        });
+
+      if (!slot) {
+        return res.status(400).json({
+          error:
+            'That time is not an available appointment slot.',
         });
       }
 
@@ -1891,6 +2108,8 @@ router.patch(
         appointment,
       });
     } catch (error) {
+      if (respondIfSlotTaken(error, res)) return;
+
       console.error(
         'PATCH /patient/appointments/:id/reschedule error:',
         error
@@ -1973,6 +2192,47 @@ router.patch(
 /* =========================================================
    DIET MANAGEMENT
    ========================================================= */
+
+router.get(
+  '/diet-restrictions',
+  async (req, res) => {
+    try {
+      const episode =
+        await getActiveCareEpisode(
+          req.user.id
+        );
+
+      const restrictions =
+        episode
+          ? await FoodRestriction.findAll({
+              where: {
+                patientId:
+                  req.user.id,
+
+                careEpisodeId:
+                  episode.id,
+              },
+
+              order: [
+                ['createdAt', 'DESC'],
+              ],
+            })
+          : [];
+
+      res.json({ restrictions });
+    } catch (error) {
+      console.error(
+        'GET /patient/diet-restrictions error:',
+        error
+      );
+
+      res.status(500).json({
+        error:
+          'Unable to load dietary restrictions.',
+      });
+    }
+  }
+);
 
 router.post(
   '/diet-check',
@@ -2167,11 +2427,8 @@ router.post(
       };
 
       /*
-       * PHASE 3:
-       *
-       * The scoring operation is now asynchronous because
-       * Node delegates inference to the actual Python
-       * One-Class SVM service.
+       * The scoring operation is asynchronous because Node
+       * delegates it to the Python drift-scoring service.
        */
       const scored =
         await scoreVitals(
@@ -2194,7 +2451,7 @@ router.post(
        * Retrieve the patient's prior assessments for the
        * current active recovery episode.
        *
-       * The ML score itself is produced by the SVM.
+       * The drift score itself is produced by the Python service.
        * The longitudinal trajectory is computed separately
        * from the stored anomaly-score history.
        */
@@ -2277,11 +2534,11 @@ router.post(
 
           /*
            * Persist the real model version reported by
-           * the Python One-Class SVM service.
+           * the Python drift-scoring service.
            */
           modelVersion:
             scored?.modelVersion ||
-            'v2-one-class-svm-reference',
+            'v3-evidently-drift-baseline',
 
           anomalyScore:
             score,
@@ -2291,6 +2548,15 @@ router.post(
 
           trendLabel,
         });
+
+      if (label === 'outlier' || trendLabel === 'Requires Attention') {
+        notifyDoctor(
+          req.app.get('io'),
+          episode.doctorId,
+          'clinical_record_updated',
+          { patientId: req.user.id, needsReview: true }
+        );
+      }
 
       const monitoringMessage =
         getMonitoringMessage
@@ -2325,7 +2591,7 @@ router.post(
 
             algorithm:
               scored?.algorithm ||
-              'One-Class SVM (RBF kernel)',
+              'Evidently AI drift distance',
 
             decisionValue:
               scored?.decisionValue ??
@@ -2368,13 +2634,10 @@ router.post(
 
       if (
         message.includes(
-          'One-Class SVM service'
+          'Vitals drift service'
         ) ||
         message.includes(
           'ML service'
-        ) ||
-        message.includes(
-          'SVM service'
         )
       ) {
         return res.status(503).json({
@@ -2698,6 +2961,13 @@ router.post(
             status:
               'open',
           });
+
+        notifyDoctor(
+          req.app.get('io'),
+          thread.doctorId,
+          'inbox_updated',
+          { threadId: thread.id }
+        );
       }
 
       res.status(201).json({

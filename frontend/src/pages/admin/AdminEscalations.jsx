@@ -1,4 +1,5 @@
 // Phase 2.12.4 — Admin Emergency SOS Escalation & Dispatch UX
+import NavIcon from '../../components/NavIcon';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { adminService } from '../../api/services/admin';
 import { apiErrorMessage } from '../../api/client';
@@ -93,7 +94,6 @@ export default function AdminEscalations() {
   const { subscribe } = useRealtime();
   const [escalations, setEscalations] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const [success, setSuccess] = useState('');
@@ -104,11 +104,7 @@ export default function AdminEscalations() {
     async ({ background = false } = {}) => {
       setError('');
 
-      if (background) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      if (!background) setLoading(true);
 
       try {
         const response = await adminService.getEscalations();
@@ -126,7 +122,6 @@ export default function AdminEscalations() {
         );
       } finally {
         setLoading(false);
-        setRefreshing(false);
       }
     },
     [],
@@ -209,20 +204,8 @@ export default function AdminEscalations() {
     <DashboardShell>
       <div className="admin-escalations-page">
         <PageHeader
-          eyebrow="Emergency command"
           title="SOS Escalations"
           subtitle="Alerts routed to administration when the assigned doctor is off duty. Review the patient snapshot and act without delay."
-          action={(
-            <Button
-              variant="outline"
-              onClick={() =>
-                load({ background: true })
-              }
-              loading={refreshing}
-            >
-              Refresh queue
-            </Button>
-          )}
         />
 
         {error ? (
@@ -267,21 +250,19 @@ export default function AdminEscalations() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
           <StatCard
-            label="Needs action"
+            label="Needs action" icon={<NavIcon name="alert" size={44} />}
             value={activeEscalations.length}
-            detail="Escalations awaiting admin dispatch"
-            accent="danger"
-            icon="⚠"
+            detail="Awaiting dispatch"
+            accent={activeEscalations.length > 0 ? 'danger' : 'sand'}
           />
 
           <StatCard
-            label="Queue records"
+            label="Queue records" icon={<NavIcon name="inbox" size={44} />}
             value={(escalations || []).length}
-            detail="Escalation records returned by the service"
+            detail="Total records"
             accent="gold"
-            icon="▤"
           />
         </div>
 
@@ -294,10 +275,14 @@ export default function AdminEscalations() {
               subtitle="Only escalations that still require administrative action appear here."
             >
               {activeEscalations.length === 0 ? (
-                <EmptyState
-                  title="No active escalations"
-                  subtitle="There are no SOS alerts currently awaiting administrative action."
-                />
+                <div className="admin-allclear" role="status">
+                  <div>
+                    <strong>All clear</strong>
+                    <p>
+                      There are no SOS alerts currently awaiting administrative action.
+                    </p>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-4">
                   {activeEscalations.map((alert) => (
@@ -352,33 +337,6 @@ export default function AdminEscalations() {
                         </div>
 
                         <dl className="admin-escalation-details">
-                          <div>
-                            <dt>Patient</dt>
-                            <dd>
-                              {snapshot(
-                                alert.patientNameSnapshot,
-                              )}
-                            </dd>
-                          </div>
-
-                          <div>
-                            <dt>Surgery</dt>
-                            <dd>
-                              {snapshot(
-                                alert.surgerySnapshot,
-                              )}
-                            </dd>
-                          </div>
-
-                          <div>
-                            <dt>Blood group</dt>
-                            <dd>
-                              {snapshot(
-                                alert.bloodGroupSnapshot,
-                              )}
-                            </dd>
-                          </div>
-
                           <div>
                             <dt>Assigned doctor</dt>
                             <dd>

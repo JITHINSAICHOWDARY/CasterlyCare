@@ -19,19 +19,20 @@
  * but the computation here is the actual source of truth.
  */
 
+const { todayInAppTz } = require('./dates');
+
 function daysBetween(startDateStr, referenceDate = new Date()) {
   if (!startDateStr) return 0;
 
-  const start = new Date(`${startDateStr}T00:00:00`);
+  // Whole calendar days, counted in the hospital's timezone (see utils/dates.js)
+  // so a recovery ends at local midnight, not at midnight on the server.
+  const start = new Date(`${startDateStr}T00:00:00Z`);
   if (Number.isNaN(start.getTime())) return 0;
 
-  const reference = new Date(referenceDate);
-  reference.setHours(0, 0, 0, 0);
+  const reference = new Date(`${todayInAppTz(new Date(referenceDate))}T00:00:00Z`);
 
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
-  const elapsed = Math.floor(
-    (reference.getTime() - start.getTime()) / MS_PER_DAY
-  );
+  const elapsed = Math.round((reference.getTime() - start.getTime()) / MS_PER_DAY);
 
   return Math.max(0, elapsed);
 }
@@ -57,4 +58,26 @@ function computeRecovery(startDateStr, expectedRecoveryDays) {
   return { daysCompleted, daysRemaining };
 }
 
-module.exports = { computeRecovery, daysBetween };
+/**
+ * Validates a recovery-length input (from signup or a doctor's adjustment
+ * form): missing/blank defaults to 14 days, anything else must be a whole
+ * number of days within a sane range or it's rejected (null).
+ *
+ * @param {*} value - raw input, typically a string from a request body
+ * @returns {number|null} the validated day count, or null if invalid
+ */
+function normalizeRecoveryDays(value) {
+  if (value === undefined || value === null || value === '') {
+    return 14;
+  }
+
+  const days = Number(value);
+
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    return null;
+  }
+
+  return days;
+}
+
+module.exports = { computeRecovery, daysBetween, normalizeRecoveryDays };

@@ -1,5 +1,18 @@
 const jwt = require('jsonwebtoken');
 
+/*
+ * A token issued before the account's last password change must stop working,
+ * so changing a password signs out every other device. Each token carries the
+ * password version it was issued under (`pv`, 0 if the password was never
+ * changed); it is valid only while that still matches the account. This is
+ * exact - unlike comparing issue times, it cannot mix up tokens created in the
+ * same second as the change.
+ */
+function tokenPredatesPasswordChange(payload, user) {
+  const current = user?.passwordChangedAt ? new Date(user.passwordChangedAt).getTime() : 0;
+  return (payload.pv || 0) !== current;
+}
+
 async function authenticate(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -30,12 +43,18 @@ async function authenticate(req, res, next) {
     const { User } = require('../models');
 
     const user = await User.findByPk(payload.id, {
-      attributes: ['id', 'isActive'],
+      attributes: ['id', 'isActive', 'passwordChangedAt'],
     });
 
     if (!user || !user.isActive) {
       return res.status(403).json({
         error: 'This account has been deactivated. Please contact the hospital administrator.',
+      });
+    }
+
+    if (tokenPredatesPasswordChange(payload, user)) {
+      return res.status(401).json({
+        error: 'Your password was changed. Please log in again.',
       });
     }
   } catch (err) {
@@ -56,4 +75,4 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { authenticate, requireRole };
+module.exports = { authenticate, requireRole, tokenPredatesPasswordChange };

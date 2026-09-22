@@ -29,7 +29,13 @@ const User = sequelize.define('User', {
     allowNull: false,
   },
   phone: DataTypes.STRING,
+  googleId: {
+    type: DataTypes.STRING,
+    unique: true,
+  },
   photoUrl: DataTypes.STRING,
+  // Sessions issued before this moment are no longer valid (set on password change).
+  passwordChangedAt: DataTypes.DATE,
   isActive: {
     type: DataTypes.BOOLEAN,
     defaultValue: true,

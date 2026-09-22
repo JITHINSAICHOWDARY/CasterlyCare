@@ -2,14 +2,16 @@ const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
 
 /*
- * Admin-configured, hospital-wide recurring time-of-day slots
- * (e.g. "09:00", "09:15", "09:30" ...). These are not tied to a
- * specific calendar date - they represent the times of day a
- * patient is allowed to book into, every day. Whether a given
- * slot is actually free on a given date is worked out at booking
- * time by checking existing Appointment rows for that doctor,
- * date, and time - this table only defines *which times exist*,
- * not which are taken.
+ * A bookable time for one specific doctor on one specific date
+ * (e.g. Dr Rao, 2026-09-24, "09:15"). Slots are not shared between
+ * doctors or between days: the admin publishes them per doctor per
+ * day, and a patient can only book a time that exists here for
+ * their own doctor on the chosen date. Whether a slot is already
+ * taken is worked out at booking time from the Appointment rows.
+ *
+ * Stored in its own table (doctor_slots): the earlier hospital-wide
+ * appointment_slots table cannot be altered by sync() and is no
+ * longer used.
  */
 const AppointmentSlot = sequelize.define(
   'AppointmentSlot',
@@ -20,10 +22,19 @@ const AppointmentSlot = sequelize.define(
       primaryKey: true,
     },
 
+    doctorId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+
+    date: {
+      type: DataTypes.DATEONLY,
+      allowNull: false,
+    },
+
     time: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
       validate: {
         is: /^([01]\d|2[0-3]):[0-5]\d$/,
       },
@@ -36,8 +47,11 @@ const AppointmentSlot = sequelize.define(
     },
   },
   {
-    tableName: 'appointment_slots',
+    tableName: 'doctor_slots',
     timestamps: true,
+    indexes: [
+      { unique: true, fields: ['doctorId', 'date', 'time'] },
+    ],
   }
 );
 

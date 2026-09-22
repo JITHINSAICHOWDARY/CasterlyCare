@@ -9,5 +9,9 @@ export function DoctorDashboardShell({ children }) {
 }
 
 export function PatientDashboardShell({ children }) {
-  return <DashboardShell role="patient" withPatientChat>{children}</DashboardShell>;
+  return (
+    <DashboardShell role="patient" withPatientChat>
+      <div className="patient-dashboard-content">{children}</div>
+    </DashboardShell>
+  );
 }

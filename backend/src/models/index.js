@@ -15,6 +15,7 @@ const ChatThread = require('./ChatThread');
 const ChatMessage = require('./ChatMessage');
 const VitalsAssessment = require('./VitalsAssessment');
 const AppointmentSlot = require('./AppointmentSlot');
+const OtpCode = require('./OtpCode');
 
 /* =========================================================
    USER ↔ PROFILE
@@ -455,4 +456,5 @@ module.exports = {
   ChatMessage,
   VitalsAssessment,
   AppointmentSlot,
+  OtpCode,
 };

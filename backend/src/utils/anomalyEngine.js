@@ -1,22 +1,27 @@
 /**
  * CASTERLYCARE ANOMALY ENGINE
  * -----------------------------------------------------------------------
- * Phase 3.1.2
- *
- * The vitals anomaly score is now produced by the dedicated Python
- * One-Class SVM service.
+ * The vitals anomaly score is produced by a dedicated Python service.
+ * That service does not train a model - it uses Evidently AI as a
+ * statistical distance engine, scoring how far a submission has
+ * drifted from a fixed reference ("baseline") population.
  *
  * Node remains responsible for:
  *   - validating the application request
- *   - calling the ML service
- *   - normalizing the ML response
+ *   - calling the drift-scoring service
+ *   - normalizing its response
  *   - calculating longitudinal recovery trend
  *
  * The Python service is responsible for:
- *   - feature scaling
- *   - One-Class SVM inference
- *   - inlier / outlier classification
+ *   - per-vital drift distance vs. the fixed baseline
+ *   - aggregating that into one 0..1 score
+ *   - normal / outlier classification
  *   - model version reporting
+ *
+ * The field names below (decisionValue, prediction) are kept from the
+ * previous One-Class SVM contract for compatibility with the rest of
+ * this file and the database; they no longer describe an SVM decision
+ * boundary, see ml-service/app.py for what they represent now.
  * -----------------------------------------------------------------------
  */
 
@@ -74,7 +79,7 @@ function validateVitals(vitals) {
 }
 
 /**
- * Calls the dedicated Python One-Class SVM service.
+ * Calls the dedicated Python drift-scoring service.
  *
  * Returns the normalized contract consumed by the Node route.
  */
@@ -141,7 +146,7 @@ async function scoreVitals(vitals) {
         `ML service returned HTTP ${response.status}.`;
 
       throw new Error(
-        `One-Class SVM service error: ${detail}`
+        `Vitals drift service error: ${detail}`
       );
     }
 
@@ -173,7 +178,7 @@ async function scoreVitals(vitals) {
       )
     ) {
       throw new Error(
-        'One-Class SVM service returned an invalid scoring response.'
+        'Vitals drift service returned an invalid scoring response.'
       );
     }
 
@@ -196,11 +201,11 @@ async function scoreVitals(vitals) {
 
       modelVersion:
         payload?.modelVersion ||
-        'v2-one-class-svm-reference',
+        'v3-evidently-drift-baseline',
 
       algorithm:
         payload?.algorithm ||
-        'One-Class SVM (RBF kernel)',
+        'Evidently AI drift distance',
     };
   } catch (error) {
     if (
@@ -208,7 +213,7 @@ async function scoreVitals(vitals) {
       'AbortError'
     ) {
       throw new Error(
-        'The One-Class SVM service timed out.'
+        'The vitals drift service timed out.'
       );
     }
 
