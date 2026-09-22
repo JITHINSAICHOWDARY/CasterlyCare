@@ -123,7 +123,6 @@ function isValidTime(value) {
 
 function normalizeStatusValues() {
   return [
-    'scheduled',
     'upcoming',
   ];
 }

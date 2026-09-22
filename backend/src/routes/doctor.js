@@ -1995,9 +1995,9 @@ router.patch(
         return res.status(404).json({ error: 'Appointment not found.' });
       }
 
-      if (!['scheduled', 'upcoming'].includes(appointment.status)) {
+      if (!['upcoming'].includes(appointment.status)) {
         return res.status(400).json({
-          error: 'Only scheduled or upcoming appointments can be completed.',
+          error: 'Only upcoming appointments can be completed.',
         });
       }
 
