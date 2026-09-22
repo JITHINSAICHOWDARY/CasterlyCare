@@ -1189,6 +1189,8 @@ router.put(
         gender,
         emergencyContact,
         allergies,
+        surgeryName,
+        startDate,
       } = req.body;
 
       const [
@@ -1241,6 +1243,91 @@ router.put(
         }
       }
 
+      /*
+       * The procedure name/date live on the Surgery row tied to the
+       * patient's active recovery episode (and its start date is
+       * mirrored onto CareEpisode.startDate, which the recovery-day
+       * countdown is computed from - see how both are set together in
+       * POST /care-episodes above). There is nothing to edit if no
+       * episode is currently active.
+       */
+      let activeSurgery = null;
+      let activeEpisodeForSurgery = null;
+
+      if (
+        surgeryName !== undefined ||
+        startDate !== undefined
+      ) {
+        activeEpisodeForSurgery =
+          await getActiveCareEpisode(
+            req.user.id
+          );
+
+        activeSurgery =
+          activeEpisodeForSurgery
+            ?.surgery ||
+          null;
+
+        if (
+          !activeEpisodeForSurgery ||
+          !activeSurgery
+        ) {
+          return res.status(400).json({
+            message:
+              'There is no active recovery episode to update the procedure for.',
+          });
+        }
+
+        if (
+          surgeryName !== undefined
+        ) {
+          const trimmedSurgeryName =
+            String(
+              surgeryName
+            ).trim();
+
+          if (!trimmedSurgeryName) {
+            return res.status(400).json({
+              message:
+                'Surgery procedure cannot be empty.',
+            });
+          }
+
+          activeSurgery.surgeryName =
+            trimmedSurgeryName;
+        }
+
+        if (
+          startDate !== undefined
+        ) {
+          if (
+            !startDate ||
+            !isValidDate(startDate)
+          ) {
+            return res.status(400).json({
+              message:
+                'Enter a valid date for the procedure.',
+            });
+          }
+
+          if (
+            startDate >
+            todayInAppTz()
+          ) {
+            return res.status(400).json({
+              message:
+                'The procedure date cannot be in the future.',
+            });
+          }
+
+          activeSurgery.startDate =
+            startDate;
+
+          activeEpisodeForSurgery.startDate =
+            startDate;
+        }
+      }
+
       await user.save();
 
       Object.assign(
@@ -1258,7 +1345,15 @@ router.put(
 
           ...(dateOfBirth !==
             undefined && {
-              dateOfBirth,
+              // A DATEONLY column stores an empty string as the literal
+              // text "Invalid date" (it's not the same as NULL to
+              // Sequelize/the DB driver) - once that happens, every future
+              // load reads it back as that string and re-fails the same
+              // "valid date" check, permanently blocking this endpoint for
+              // the account. dateOfBirth is optional, so empty means unset.
+              dateOfBirth:
+                dateOfBirth ||
+                null,
             }),
 
           ...(gender !==
@@ -1279,6 +1374,14 @@ router.put(
       );
 
       await profile.save();
+
+      if (activeSurgery) {
+        await activeSurgery.save();
+      }
+
+      if (activeEpisodeForSurgery) {
+        await activeEpisodeForSurgery.save();
+      }
 
       res.json({
         message:

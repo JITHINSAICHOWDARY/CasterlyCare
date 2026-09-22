@@ -38,7 +38,9 @@ const PROFILE_PHOTO_ACCEPT = PROFILE_PHOTO_TYPES.join(',');
 
 const STATUS_LABELS = { active: 'Active Recovery', completed: 'Completed' };
 
-const EDITABLE_FIELDS = ['name', 'phone', 'address', 'bloodGroup', 'dateOfBirth', 'gender', 'emergencyContact', 'allergies'];
+const EDITABLE_FIELDS = ['name', 'phone', 'address', 'bloodGroup', 'dateOfBirth', 'gender', 'emergencyContact', 'allergies', 'surgeryName', 'surgeryDate'];
+
+const MAX_SURGERY_NAME_LENGTH = 150;
 
 const RECOVERY_REALTIME_EVENTS = ['recovery_updated', 'care_episode_completed', 'clinical_record_updated'];
 
@@ -85,10 +87,15 @@ function normalizeCurrentCare(profile) {
 }
 
 function normalizeDraft(profile) {
-  return EDITABLE_FIELDS.reduce((draft, field) => {
-    draft[field] = typeof profile?.[field] === 'string' ? profile[field] : profile?.[field] ?? '';
-    return draft;
+  const draft = EDITABLE_FIELDS.reduce((acc, field) => {
+    acc[field] = typeof profile?.[field] === 'string' ? profile[field] : profile?.[field] ?? '';
+    return acc;
   }, {});
+  // The procedure name/date live on the active care episode, not as
+  // top-level profile fields, so they need their own lookup.
+  draft.surgeryName = profile?.activeCareEpisode?.surgeryName || '';
+  draft.surgeryDate = profile?.activeCareEpisode?.startDate || '';
+  return draft;
 }
 
 function normalizeText(value) {
@@ -113,6 +120,16 @@ function validateDateOfBirth(value) {
   return '';
 }
 
+function validateSurgeryDate(value) {
+  if (!value) return 'Enter the date the procedure was performed.';
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return 'Enter a valid date.';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (date > today) return 'The procedure date cannot be in the future.';
+  return '';
+}
+
 function validateDraft(draft, original) {
   const errors = {};
   const name = normalizeText(draft.name);
@@ -123,6 +140,8 @@ function validateDraft(draft, original) {
   const gender = normalizeText(draft.gender);
   const emergencyContact = normalizePhone(draft.emergencyContact);
   const allergies = typeof draft.allergies === 'string' ? draft.allergies.trim() : '';
+  const hasActiveCare = Boolean(original?.activeCareEpisode);
+  const surgeryName = normalizeText(draft.surgeryName);
 
   if (!name) errors.name = 'Full name is required.';
   else if (name.length < 2) errors.name = 'Full name must contain at least 2 characters.';
@@ -150,11 +169,19 @@ function validateDraft(draft, original) {
 
   if (allergies.length > MAX_ALLERGIES_LENGTH) errors.allergies = `Allergies must be ${MAX_ALLERGIES_LENGTH} characters or fewer.`;
 
+  if (hasActiveCare) {
+    if (!surgeryName) errors.surgeryName = 'Surgery procedure is required.';
+    else if (surgeryName.length > MAX_SURGERY_NAME_LENGTH) errors.surgeryName = `Surgery procedure must be ${MAX_SURGERY_NAME_LENGTH} characters or fewer.`;
+
+    const surgeryDateError = validateSurgeryDate(normalizeDate(draft.surgeryDate));
+    if (surgeryDateError) errors.surgeryDate = surgeryDateError;
+  }
+
   return errors;
 }
 
-function buildPayload(draft) {
-  return {
+function buildPayload(draft, hasActiveCare) {
+  const payload = {
     name: normalizeText(draft.name),
     phone: normalizePhone(draft.phone),
     address: typeof draft.address === 'string' ? draft.address.trim() : '',
@@ -164,6 +191,17 @@ function buildPayload(draft) {
     emergencyContact: normalizePhone(draft.emergencyContact),
     allergies: typeof draft.allergies === 'string' ? draft.allergies.trim() : '',
   };
+
+  // Only sent when there's an active episode to apply it to — the
+  // backend's wire name is `startDate` (it updates both the Surgery
+  // row and the linked CareEpisode's startDate together, since the
+  // recovery-day countdown is computed from the latter).
+  if (hasActiveCare) {
+    payload.surgeryName = normalizeText(draft.surgeryName);
+    payload.startDate = normalizeDate(draft.surgeryDate);
+  }
+
+  return payload;
 }
 
 export default function PatientProfile() {
@@ -218,9 +256,10 @@ export default function PatientProfile() {
   }, [subscribe, profile?.id, profile?.userId]);
 
   // Closing or reloading the tab with unsaved edits asks first.
+  const hasActiveCare = Boolean(profile?.activeCareEpisode);
   const dirty = useMemo(
-    () => profile ? JSON.stringify(buildPayload(draft)) !== JSON.stringify(buildPayload(normalizeDraft(profile))) : false,
-    [draft, profile],
+    () => profile ? JSON.stringify(buildPayload(draft, hasActiveCare)) !== JSON.stringify(buildPayload(normalizeDraft(profile), hasActiveCare)) : false,
+    [draft, profile, hasActiveCare],
   );
   useEffect(() => {
     if (!editing || !dirty) return undefined;
@@ -266,14 +305,42 @@ export default function PatientProfile() {
       return;
     }
 
-    void persistProfile(buildPayload(draft));
+    void persistProfile(buildPayload(draft, hasActiveCare));
   }
 
   async function persistProfile(payload) {
     setSaving(true);
     try {
-      const res = await patientService.updateProfile(payload);
-      const nextProfile = res?.data && typeof res.data === 'object' ? res.data : { ...profile, ...payload };
+      // PUT /patient/profile only returns a confirmation message, never the
+      // updated profile, so the new state is always built locally from what
+      // was just sent — surgeryName/startDate need special handling since
+      // they live nested under activeCareEpisode, not as top-level fields.
+      await patientService.updateProfile(payload);
+      const nextProfile = { ...profile, ...payload };
+      delete nextProfile.surgeryName;
+      delete nextProfile.startDate;
+      if (profile?.activeCareEpisode && (payload.surgeryName !== undefined || payload.startDate !== undefined)) {
+        nextProfile.activeCareEpisode = {
+          ...profile.activeCareEpisode,
+          ...(payload.surgeryName !== undefined && { surgeryName: payload.surgeryName }),
+          ...(payload.startDate !== undefined && { startDate: payload.startDate }),
+        };
+        // The same surgery also appears as its own row in the surgical
+        // history ledger below — keep that in sync too, matched by
+        // Surgery id (not care-episode id, a different id space).
+        const surgeryId = profile.activeCareEpisode.surgeryId;
+        if (surgeryId && Array.isArray(profile.surgeryLedger)) {
+          nextProfile.surgeryLedger = profile.surgeryLedger.map((item) =>
+            item.id === surgeryId
+              ? {
+                  ...item,
+                  ...(payload.surgeryName !== undefined && { surgeryName: payload.surgeryName }),
+                  ...(payload.startDate !== undefined && { startDate: payload.startDate }),
+                }
+              : item,
+          );
+        }
+      }
       setProfile(nextProfile);
       setDraft(normalizeDraft(nextProfile));
       setFieldErrors({});
@@ -591,6 +658,24 @@ export default function PatientProfile() {
                   multiline rows={2} maxLength={MAX_ALLERGIES_LENGTH}
                 />
               </FormGrid>
+
+              {hasActiveCare ? (
+                <FormGrid columns={2}>
+                  <ValidatedField
+                    id="patient-profile-surgeryName" label="Surgery done" required
+                    value={draft.surgeryName || ''} error={fieldErrors.surgeryName}
+                    onChange={(value) => updateDraft('surgeryName', value)}
+                    maxLength={MAX_SURGERY_NAME_LENGTH}
+                  />
+
+                  <ValidatedField
+                    id="patient-profile-surgeryDate" label="Date performed" required
+                    value={draft.surgeryDate || ''} error={fieldErrors.surgeryDate}
+                    onChange={(value) => updateDraft('surgeryDate', value)}
+                    type="date"
+                  />
+                </FormGrid>
+              ) : null}
 
               {saveError ? <Alert variant="danger" title="Profile could not be saved" role="alert">{saveError}</Alert> : null}
 
