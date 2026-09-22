@@ -113,7 +113,7 @@ router.get(
         SOSAlert.count({
           where: {
             status:
-              'escalated',
+              'escalated_admin',
           },
         }),
       ]);
@@ -1106,7 +1106,7 @@ async function loadEscalatedSOS() {
     await SOSAlert.findAll({
       where: {
         status:
-          'escalated',
+          'escalated_admin',
       },
 
       include: [
@@ -1437,7 +1437,7 @@ router.patch(
 
       if (
         alert.status !==
-        'escalated'
+        'escalated_admin'
       ) {
         return res.status(400).json({
           message:

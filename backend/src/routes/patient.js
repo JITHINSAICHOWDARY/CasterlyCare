@@ -827,7 +827,7 @@ router.post(
           status:
             isDoctorOnDuty
               ? 'pending'
-              : 'escalated',
+              : 'escalated_admin',
 
           patientNameSnapshot:
             patient.name ||
