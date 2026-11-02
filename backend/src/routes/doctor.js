@@ -49,6 +49,7 @@ const path = require('path');
 const { respondIfSlotTaken } = require('../utils/conflicts');
 const { completeElapsedEpisodes } = require('../utils/episodes');
 const { isValidVisitSelection } = require('../utils/visitSelection');
+const { getDriftStats } = require('../utils/anomalyEngine');
 
 const router = express.Router();
 
@@ -2657,6 +2658,38 @@ router.get(
       res.status(500).json({
         error:
           'Unable to load chat history.',
+      });
+    }
+  }
+);
+
+/*
+ * MODEL MONITORING (MLOps observability)
+ * ---------------------------------------
+ * Fleet-level view over recent vitals-assessment scoring, sourced from
+ * the ML service's MLflow tracking log. Per-patient drift already shows
+ * on that patient's own page; this is the system-wide complement to it -
+ * how the model is behaving across everyone it's scored recently, not
+ * any one patient's trend.
+ */
+router.get(
+  '/model-monitoring',
+  async (req, res) => {
+    try {
+      const stats =
+        await getDriftStats();
+
+      res.json(stats);
+    } catch (error) {
+      console.error(
+        'GET /doctor/model-monitoring error:',
+        error
+      );
+
+      res.json({
+        available: false,
+        reason:
+          'The monitoring service is temporarily unavailable.',
       });
     }
   }

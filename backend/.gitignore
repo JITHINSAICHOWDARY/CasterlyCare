@@ -1,6 +1,8 @@
 node_modules/
 data/
 .env
+ml-service/mlruns/
+ml-service/.venv/
 uploads/patient_files/*
 uploads/profile_photos/*
 !uploads/patient_files/.gitkeep

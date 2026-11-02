@@ -38,6 +38,29 @@ from evidently.metrics import ValueDrift
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+# MLflow's filesystem tracking store is in "maintenance mode" as of 3.x and
+# needs this opt-in; must be set before mlflow reads it on first use.
+os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+
+MLFLOW_EXPERIMENT_NAME = "casterlycare-vitals-drift"
+
+# MLflow logs every /score call for production monitoring (MLOps
+# observability: tracking the model's live behavior, not training it).
+# This is intentionally allowed to fail without ever affecting a real
+# scoring response — a monitoring side-channel must never be able to
+# break the thing it's monitoring.
+try:
+    import mlflow
+
+    mlflow.set_tracking_uri(
+        "file:" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "mlruns")
+    )
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    MLFLOW_ENABLED = True
+except Exception:  # pragma: no cover - monitoring must never block startup
+    mlflow = None
+    MLFLOW_ENABLED = False
+
 
 APP_NAME = "CasterlyCare Vitals Drift Service"
 MODEL_VERSION = "v3-evidently-drift-baseline"
@@ -190,6 +213,29 @@ def health() -> dict:
     }
 
 
+def log_score_to_mlflow(vitals: VitalsRequest, drift_magnitude: float, score: float, label: str) -> None:
+    """Best-effort production monitoring log. Never raises."""
+
+    if not MLFLOW_ENABLED:
+        return
+    try:
+        with mlflow.start_run(run_name=f"score-{label}"):
+            mlflow.log_params(
+                {
+                    "model_version": MODEL_VERSION,
+                    "spo2": vitals.spo2,
+                    "systolic": vitals.systolic,
+                    "diastolic": vitals.diastolic,
+                    "heartRate": vitals.heartRate,
+                    "temperature": vitals.temperature,
+                }
+            )
+            mlflow.log_metrics({"drift_magnitude": drift_magnitude, "score": score})
+            mlflow.set_tags({"label": label})
+    except Exception:  # pragma: no cover - monitoring must never break scoring
+        pass
+
+
 @app.post("/score", response_model=ScoreResponse)
 def score_vitals(vitals: VitalsRequest) -> ScoreResponse:
     validate_relationships(vitals)
@@ -197,6 +243,8 @@ def score_vitals(vitals: VitalsRequest) -> ScoreResponse:
     drift_magnitude = compute_drift_magnitude(vitals)
     score = drift_magnitude_to_score(drift_magnitude)
     label = "outlier" if score >= OUTLIER_THRESHOLD else "normal"
+
+    log_score_to_mlflow(vitals, drift_magnitude, score, label)
 
     return ScoreResponse(
         modelVersion=MODEL_VERSION,
@@ -210,6 +258,61 @@ def score_vitals(vitals: VitalsRequest) -> ScoreResponse:
         label=label,
         algorithm=ALGORITHM_NAME,
     )
+
+
+@app.get("/drift-stats")
+def drift_stats(limit: int = 50) -> dict:
+    """
+    Aggregated monitoring view over recent /score calls, sourced from the
+    MLflow tracking log rather than any single patient record - this is
+    the fleet-level observability layer (how is the model behaving across
+    everyone it's scored recently), as opposed to /score's per-instance
+    result.
+    """
+
+    if not MLFLOW_ENABLED:
+        return {"available": False, "reason": "MLflow tracking is not enabled on this instance."}
+
+    try:
+        runs = mlflow.search_runs(
+            experiment_names=[MLFLOW_EXPERIMENT_NAME],
+            order_by=["start_time DESC"],
+            max_results=limit,
+        )
+    except Exception as exc:  # pragma: no cover - read-only monitoring, fail soft
+        return {"available": False, "reason": str(exc)}
+
+    if runs.empty:
+        return {
+            "available": True,
+            "totalRuns": 0,
+            "normalCount": 0,
+            "outlierCount": 0,
+            "averageScore": None,
+            "averageDriftMagnitude": None,
+            "recent": [],
+        }
+
+    label_column = runs["tags.label"] if "tags.label" in runs.columns else pd.Series(dtype=str)
+    recent = [
+        {
+            "label": row.get("tags.label"),
+            "score": round(float(row.get("metrics.score", 0.0)), 6),
+            "driftMagnitude": round(float(row.get("metrics.drift_magnitude", 0.0)), 6),
+            "recordedAt": row.get("start_time").isoformat() if pd.notnull(row.get("start_time")) else None,
+        }
+        for _, row in runs.head(limit).iterrows()
+    ]
+
+    return {
+        "available": True,
+        "totalRuns": int(len(runs)),
+        "normalCount": int((label_column == "normal").sum()),
+        "outlierCount": int((label_column == "outlier").sum()),
+        "averageScore": round(float(runs["metrics.score"].mean()), 6) if "metrics.score" in runs.columns else None,
+        "averageDriftMagnitude": round(float(runs["metrics.drift_magnitude"].mean()), 6) if "metrics.drift_magnitude" in runs.columns else None,
+        "recent": recent,
+    }
 
 
 if __name__ == "__main__":

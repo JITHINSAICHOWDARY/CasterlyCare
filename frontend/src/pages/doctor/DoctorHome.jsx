@@ -23,6 +23,64 @@ function safeText(value, fallback = 'Not recorded') {
   return value === null || value === undefined || String(value).trim() === '' ? fallback : String(value);
 }
 
+// Fleet-level MLOps observability: how the vitals drift model is behaving
+// across everyone it's scored recently, sourced from the ML service's
+// MLflow tracking log — distinct from any one patient's own trend, which
+// already shows on that patient's page.
+function ModelMonitoringPanel() {
+  const [stats, setStats] = useState(null);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    doctorService.getModelMonitoring()
+      .then((res) => { if (!cancelled) setStats(res.data); })
+      .catch((error) => { if (!cancelled) setLoadError(error?.message || 'Unable to load model monitoring.'); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loadError) return null;
+  if (!stats) return null;
+  if (!stats.available) {
+    return (
+      <Panel title="Model Monitoring">
+        <EmptyState title="Monitoring unavailable" subtitle={stats.reason || 'The monitoring service could not be reached.'} />
+      </Panel>
+    );
+  }
+  if (stats.totalRuns === 0) {
+    return (
+      <Panel title="Model Monitoring">
+        <EmptyState title="No scoring activity yet" subtitle="Once patients start submitting vitals, drift-scoring activity will show up here." />
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel title="Model Monitoring" subtitle="Vitals drift-scoring activity across your patients, tracked via MLflow.">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+        <StatCard label="Scored readings" value={stats.totalRuns} accent="crimson" />
+        <StatCard label="Within normal range" value={stats.normalCount} accent="forest" />
+        <StatCard label="Outliers" value={stats.outlierCount} accent={stats.outlierCount > 0 ? 'danger' : 'gold'} />
+        <StatCard label="Average drift score" value={stats.averageScore?.toFixed(2) ?? '—'} accent="gold" />
+      </div>
+
+      <p className="field-label mb-2">Recent scored readings</p>
+      <div className="space-y-2">
+        {stats.recent.slice(0, 8).map((run, index) => (
+          <div key={index} className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-line)] p-2.5">
+            <span className="text-sm text-[var(--color-text-soft)]">
+              {run.recordedAt ? new Date(run.recordedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Time not recorded'}
+            </span>
+            <span className="text-sm font-medium text-[var(--color-ink)]">score {run.score.toFixed(2)}</span>
+            <Badge variant={run.label === 'outlier' ? 'critical' : 'forest'}>{run.label === 'outlier' ? 'Outlier' : 'Normal'}</Badge>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
 export default function DoctorHome() {
   const { user } = useAuth();
   const { subscribe } = useRealtime();
@@ -219,6 +277,8 @@ export default function DoctorHome() {
               </ul>
             )}
           </Panel>
+
+          <ModelMonitoringPanel />
         </div>
       )}
       </div>

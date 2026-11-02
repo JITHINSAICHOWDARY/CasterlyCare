@@ -336,8 +336,49 @@ function getMonitoringMessage(
   return 'Within configured monitoring parameters.';
 }
 
+/**
+ * Fleet-level monitoring: aggregated stats across recent /score calls,
+ * sourced from the ML service's MLflow tracking log. This is doctor-
+ * facing observability (how is the model behaving across everyone it's
+ * scored recently), distinct from a single patient's own trend.
+ *
+ * Read-only and best-effort - a monitoring dashboard failing to load
+ * must never surface as an error to the rest of the app.
+ */
+async function getDriftStats() {
+  const controller =
+    new AbortController();
+
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, ML_SERVICE_TIMEOUT_MS);
+
+  try {
+    const response =
+      await fetch(
+        `${getMlServiceUrl()}/drift-stats`,
+        {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        }
+      );
+
+    if (!response.ok) {
+      throw new Error(
+        `Drift stats service returned HTTP ${response.status}.`
+      );
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 module.exports = {
   scoreVitals,
   computeTrend,
   getMonitoringMessage,
+  getDriftStats,
 };

@@ -3,3 +3,4 @@ uvicorn[standard]
 numpy
 pandas
 evidently
+mlflow-skinny==3.17.2

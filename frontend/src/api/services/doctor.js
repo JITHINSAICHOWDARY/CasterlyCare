@@ -2,6 +2,7 @@ import api, { multipartConfig } from '../client';
 
 export const doctorService = {
   getHome() { return api.get('/doctor/home'); },
+  getModelMonitoring() { return api.get('/doctor/model-monitoring'); },
   acknowledgeSos(alertId) { return api.post(`/doctor/sos/${alertId}/acknowledge`); },
   getProfile() { return api.get('/doctor/profile'); },
   updateProfile(payload) { return api.put('/doctor/profile', payload); },
