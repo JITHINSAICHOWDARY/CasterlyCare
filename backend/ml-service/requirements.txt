@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-numpy
-pandas
-evidently
+numpy==2.5.2
+pandas==3.0.6
+evidently==0.7.23
 mlflow-skinny==3.17.2
